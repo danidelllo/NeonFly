@@ -1,0 +1,4 @@
+-r requirements-env.txt
+pandas==2.3.3
+scipy==1.16.3
+# Install the verified Windows CUDA torch wheel separately (see docs/VIEWER.md).

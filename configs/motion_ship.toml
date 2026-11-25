@@ -1,0 +1,14 @@
+# Frozen before launch: every episode starts at the ordinary Level_1 start.
+action_ticks = 4
+max_steps = 8192
+max_seconds = 600.0
+resolution = 84
+stack = 4
+rgb = true
+controlled = true
+living_reward_per_applied_tick = 0.0
+survival_per_second = 0.01
+survival_cap_seconds = 300.0
+damage_penalty = 1.0
+death_reward = -2.0
+completion_reward = 20.0
