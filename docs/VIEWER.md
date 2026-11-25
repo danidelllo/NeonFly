@@ -1,5 +1,10 @@
 # Connectome Observatory
 
+For current launch/install/resume commands, read [the agent runbook](../AGENTS.md).
+This document includes historical viewer descriptions; the current game controls
+are Pause/Step/Play under Game Status (see the final section). Freeze view is
+removed, and All inputs includes visual, resource, and range populations.
+
 ## Visual inputs and control wiring
 
 The top-right Game status area keeps the current scene, game frame, training

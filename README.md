@@ -1,5 +1,11 @@
 # NeonFly
 
+**Start here for current setup and agent handoff:** [AGENTS.md](AGENTS.md).
+It covers dependency installation, BepInEx/bridge installation, normal game
+launch, checkpoint resumption, the Observatory, Pause/Step/Play, and recovery.
+The current sensor run uses `configs/sensor_ppo.toml` and
+`configs/sensor_ship.toml`; historical commands below describe earlier runs.
+
 Windows-native experiments in visual control of the Steam game NEONSKY. The research target is a policy constrained by real fly connectivity; the CNN is an engineering control, not the research result.
 
 From the checkout root in PowerShell:
