@@ -1,10 +1,19 @@
+Current run: **flywire-dqn-012**, continuing with **1 million disk-backed replay transitions**. See [disk replay notes](docs/DISK_REPLAY_RUN.md).
+
+Current reward experiment: **flywire-dqn-011** — destruction **+5**, death **-100**. See [reward run notes](docs/HEAVY_REWARD_RUN.md).
+
+Current experiment: **flywire-dqn-010**, fixed connectome + Double/dueling DQN with prioritized replay. See [DQN run notes](docs/DQN_RUN.md) and [agent handoff](AGENTS.md). Best models are selected by mean evaluation task reward.
+
 # NeonFly
 
 **Start here for current setup and agent handoff:** [AGENTS.md](AGENTS.md).
 It covers dependency installation, BepInEx/bridge installation, normal game
 launch, checkpoint resumption, the Observatory, Pause/Step/Play, and recovery.
-The current sensor run uses `configs/sensor_ppo.toml` and
-`configs/sensor_ship.toml`; historical commands below describe earlier runs.
+The current `flywire-dense-008` run uses `configs/dense_ppo.toml` and
+`configs/combat_ship.toml`. Its [sensor design and budget](docs/DENSE_SENSOR_RUN.md)
+use 126 rays, with dense front/below sectors and exactly three neuron destinations
+per value. [Combat rewards](docs/COMBAT_RUN.md) remain active and reward caps
+remain disabled at the user's request. Historical commands below describe earlier runs.
 
 Windows-native experiments in visual control of the Steam game NEONSKY. The research target is a policy constrained by real fly connectivity; the CNN is an engineering control, not the research result.
 

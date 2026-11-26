@@ -9,17 +9,41 @@ namespace NeonFly
         public bool valid;
         public bool insideView;
         public float range = 12;
-        public float[] distance = new float[32];
-        public float[] visible = new float[32];
-        public float[] visibleStart = new float[32];
-        public int[] kind = new int[32];
-        public float[] geometryDistance = new float[32];
-        public int[] geometryKind = new int[32];
+        public float[] angles = RangeSensor.CreateAngles();
+        public float[] distance = new float[RangeSensor.RayCount];
+        public float[] visible = new float[RangeSensor.RayCount];
+        public float[] visibleStart = new float[RangeSensor.RayCount];
+        public int[] kind = new int[RangeSensor.RayCount];
+        public float[] geometryDistance = new float[RangeSensor.RayCount];
+        public int[] geometryKind = new int[RangeSensor.RayCount];
         public float vx, vy, screenX, screenY;
     }
 
     internal static class RangeSensor
     {
+        internal const int RayCount = 126;
+        internal const string Layout = "quadrants-126-v2";
+
+        // Four half-open 90-degree sectors, using bin centers to avoid overlap.
+        // Front is world-right (the ship's nose), then top, back and below.
+        internal static float RayAngle(int index)
+        {
+            if (index < 0 || index >= RayCount) throw new ArgumentOutOfRangeException("index");
+            int count, local; float start;
+            if (index < 55) { count = 55; local = index; start = -45; }
+            else if (index < 63) { count = 8; local = index - 55; start = 45; }
+            else if (index < 71) { count = 8; local = index - 63; start = 135; }
+            else { count = 55; local = index - 71; start = 225; }
+            return (float)((start + (local + .5) * 90 / count) * Math.PI / 180);
+        }
+
+        internal static float[] CreateAngles()
+        {
+            var angles = new float[RayCount];
+            for (int i = 0; i < RayCount; i++) angles[i] = RayAngle(i);
+            return angles;
+        }
+
         // Slab intersection of a world-distance ray with the camera viewport.
         // Keeping both entry and exit allows off-screen origins without querying
         // off-screen geometry. Distances remain measured from the actual ship.
@@ -79,8 +103,8 @@ namespace NeonFly
             filter.SetLayerMask(Physics2D.AllLayers);
             filter.useTriggers = true;
             var hits = new RaycastHit2D[1024];
-            for (int i = 0; i < 32; i++) {
-                float angle = i * 2 * Mathf.PI / 32;
+            for (int i = 0; i < RayCount; i++) {
+                float angle = result.angles[i];
                 var direction = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
                 Vector3 delta = camera.WorldToViewportPoint(origin + (Vector3)direction) - viewport;
                 float enter, limit;

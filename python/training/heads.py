@@ -24,7 +24,23 @@ class NonlinearReadout(nn.Module):
         return torch.cat((self.actor(z), self.critic(z)), dim=-1)
 
 
+class DuelingReadout(nn.Module):
+    def __init__(self, width, hidden=256):
+        super().__init__()
+        self.body = nn.Sequential(nn.Linear(width, hidden), nn.ReLU(),
+                                  nn.Linear(hidden, 128), nn.ReLU())
+        self.advantage = nn.Linear(128, 36)
+        self.value = nn.Linear(128, 1)
+
+    def forward(self, x):
+        z = self.body(x)
+        advantage = self.advantage(z)
+        return self.value(z) + advantage - advantage.mean(dim=-1, keepdim=True)
+
+
 def make_head(width, cfg, device):
+    if cfg.get('algorithm') == 'dqn':
+        return DuelingReadout(width, cfg.get('hidden', 256)).to(device)
     if cfg.get("hidden", 0):
         return NonlinearReadout(width, cfg["hidden"]).to(device)
     head = nn.Linear(width, 37).to(device)

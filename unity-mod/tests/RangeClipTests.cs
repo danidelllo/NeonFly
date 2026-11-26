@@ -61,6 +61,20 @@ class RangeClipTests
             }
             checks++;
         }
-        Console.WriteLine("Passed " + checks + " range clipping cases.");
+        var angleMethod=assembly.GetType("NeonFly.RangeSensor").GetMethod("RayAngle", BindingFlags.Static | BindingFlags.NonPublic);
+        int[] counts = {0,0,0,0};
+        double previous = -999;
+        for (int i=0; i<126; i++) {
+            double angle=(float)angleMethod.Invoke(null, new object[] {i})*180/Math.PI;
+            if (angle <= previous || angle <= -45 || angle >= 315) throw new Exception("Invalid/duplicate ray angle");
+            int group=angle<45?0:angle<135?1:angle<225?2:3;counts[group]++;
+            if (i>0 && i!=55 && i!=63 && i!=71) {
+                double expected=group==0||group==3?90.0/55:11.25;
+                if (Math.Abs(angle-previous-expected)>1e-4) throw new Exception("Wrong sector spacing");
+            }
+            previous=angle;
+        }
+        if (counts[0]!=55 || counts[1]!=8 || counts[2]!=8 || counts[3]!=55) throw new Exception("Wrong ray groups");
+        Console.WriteLine("Passed " + checks + " range clipping cases and 126-ray sector layout checks.");
     }
 }

@@ -22,7 +22,8 @@ def receive(stream, capture):
     if "sensorValid" in meta:
         meta["rays"] = dict(valid=meta["sensorValid"], insideView=meta["sensorInsideView"], range=meta["sensorRange"],
             distance=meta["sensorDistance"], visible=meta["sensorVisible"], kind=meta["sensorKind"],
-            visibleStart=meta.get("sensorVisibleStart", [0.]*32),
+            visibleStart=meta.get("sensorVisibleStart", [0.]*len(meta['sensorDistance'])),
+            angles=meta.get('sensorAngles'), layout=meta.get('sensorLayout'),
             geometryDistance=meta["sensorGeometryDistance"], geometryKind=meta["sensorGeometryKind"],
             vx=meta["sensorVx"], vy=meta["sensorVy"], screenX=meta["sensorScreenX"], screenY=meta["sensorScreenY"])
     if meta.get("ok") is not True:

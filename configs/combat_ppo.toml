@@ -1,0 +1,27 @@
+seed = 783
+updates = 128
+episodes_per_update = 4
+epochs = 4
+minibatch = 256
+learning_rate = 0.0003
+gamma = 0.999
+gae_lambda = 0.99
+clip = 0.2
+entropy_coef = 0.005
+max_grad_norm = 0.5
+target_kl = 0.02
+eval_every_updates = 16
+eval_episodes = 5
+hidden = 256
+encoder = "color-motion-rays-v1"
+rnd = true
+rnd_coefficient = 0.002
+# Zero disables reward clipping; novelty accounting remains checkpointed.
+rnd_step_cap = 0.0
+rnd_episode_cap = 0.0
+rnd_replay_capacity = 8192
+episodic_coverage = true
+coverage_bins = [12, 8]
+coverage_cell_bonus = 0.006
+novelty_skip_damage = true
+combat_reward_transfer = true

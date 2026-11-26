@@ -44,7 +44,7 @@ export function actionWiring(outputs,project,repaint){
       if(!$("allLinks").checked){drivers=drivers.slice(0,8);if(inspected&&!drivers.includes(inspected))drivers.push(inspected)}
       hub.textContent=`#${action}`;
       hub.title="Layer-normalized activity, differences and averages from 1,415 output neurons form 4,245 readout features. Lines show live activity, not linear weight contributions.";
-      $("score").textContent=`#${action} ${label(action)}\nScore ${signed(frame.logits[action])}\nHidden layers 256 → 128 · 36 action scores`;
+      $("score").textContent=`#${action} ${label(action)}\n${frame.algorithm==="dqn"?"Q":"Score"} ${signed(frame.logits[action])}\nHidden layers 256 → 128 · 36 ${frame.algorithm==="dqn"?"dueling Q values":"action scores"}`;
       $("driver").textContent=`${drivers.length} of ${outputs.length} neuron links shown, ranked by activity magnitude. Lines show wiring and activity, not causal contribution.`;
     }else{$("driver").textContent=""}
     repaint()

@@ -9,8 +9,8 @@ export function rangeRadar(){
     ctx.strokeStyle='#233742';ctx.lineWidth=.6;
     for(const radius of [20,40,60]){ctx.beginPath();ctx.arc(75,75,radius,0,2*Math.PI);ctx.stroke()}
     ctx.beginPath();ctx.moveTo(10,75);ctx.lineTo(140,75);ctx.moveTo(75,10);ctx.lineTo(75,140);ctx.stroke();
-    for(let i=0;i<32;i++){
-      const angle=2*Math.PI*i/32,distance=rays.distance[i]/rays.range*60;
+    for(let i=0;i<rays.distance.length;i++){
+      const angle=rays.angles?.[i]??2*Math.PI*i/rays.distance.length,distance=rays.distance[i]/rays.range*60;
       const start=(rays.visibleStart?.[i]??0)/rays.range*60;
       const x=75+Math.cos(angle)*distance,y=75-Math.sin(angle)*distance;
       ctx.strokeStyle=colors[rays.kind[i]];ctx.globalAlpha=rays.kind[i]? .85:.3;ctx.lineWidth=rays.kind[i]?1:.6;
@@ -20,9 +20,10 @@ export function rangeRadar(){
     ctx.globalAlpha=1;ctx.fillStyle='#dceef0';ctx.beginPath();ctx.moveTo(80,75);ctx.lineTo(71,71);ctx.lineTo(71,79);ctx.closePath();ctx.fill();
     ctx.fillStyle='#7796a5';ctx.font='8px Segoe UI';ctx.fillText('↑',72,9);ctx.fillText('→',140,78);
     const visible=rays.visible.some((end,i)=>end>(rays.visibleStart?.[i]??0));
-    document.getElementById('rangeStatus').textContent=rays.insideView?`32 rays · ${rays.range} units · visible scene`:
-      visible?'Ship outside · sensing visible scene':'Ship outside · no visible ray segments';
-    canvas.title=`Same decision sample ${frame.seq}. Right = forward, up = world up. Solid: blue; damageable: amber; hostile projectile: red; lethal: violet. Clipped to current camera view.`;
+    document.getElementById('rangeStatus').textContent=rays.insideView?`${rays.distance.length} rays · ${rays.range} units · visible scene`:
+      visible?`${rays.distance.length} rays · outside ship · visible scene`:`${rays.distance.length} rays · no visible segments`;
+    canvas.title=`Same decision sample ${frame.seq}. ${rays.distance.length===126?'Front 55 · Top 8 · Behind 8 · Below 55. ':''}Right = forward, up = world up. Solid: blue; damageable: amber; hostile projectile: red; lethal: violet. Clipped to current camera view.`;
+    panel.dataset.rayCount=String(rays.distance.length);
     panel.dataset.sample=String(frame.seq)
   }};
 }

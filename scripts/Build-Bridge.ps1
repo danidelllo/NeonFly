@@ -16,6 +16,6 @@ if ((Get-FileHash $zip).Hash -ne '6c57a714a892efb4e9e1fef63d608a3391f30ec984031c
 }
 Expand-Archive $zip $loader -Force
 $refs = @('mscorlib','netstandard','System','System.Core','Assembly-CSharp','UnityEngine','UnityEngine.InputLegacyModule','UnityEngine.Physics2DModule','UnityEngine.UI','UnityEngine.UIModule','UnityEngine.CoreModule','UnityEngine.ScreenCaptureModule','UnityEngine.ImageConversionModule','UnityEngine.JSONSerializeModule') | ForEach-Object { "/reference:$managed\$_.dll" }
-& $compiler /nologo /noconfig /nostdlib+ /target:library /optimize+ /warnaserror+ "/out:$output\NeonFly.dll" "/reference:$loader\BepInEx\core\BepInEx.dll" "/reference:$loader\BepInEx\core\0Harmony.dll" $refs "$root\unity-mod\src\Bridge.cs" "$root\unity-mod\src\GameAdapter.cs" "$root\unity-mod\src\RangeSensor.cs"
+& $compiler /nologo /noconfig /nostdlib+ /target:library /optimize+ /warnaserror+ "/out:$output\NeonFly.dll" "/reference:$loader\BepInEx\core\BepInEx.dll" "/reference:$loader\BepInEx\core\0Harmony.dll" $refs "$root\unity-mod\src\Bridge.cs" "$root\unity-mod\src\GameAdapter.cs" "$root\unity-mod\src\RangeSensor.cs" "$root\unity-mod\src\Combat.cs" "$root\unity-mod\src\CombatLedger.cs"
 if ($LASTEXITCODE -ne 0) { throw 'Bridge compilation failed.' }
 Write-Output "$output\NeonFly.dll"

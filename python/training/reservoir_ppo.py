@@ -73,9 +73,8 @@ class ReplayPolicy:
 
 
 def evaluation_rank(rows):
-    wins = [r for r in rows if r["reason"] == "completion"]
-    return (len(wins)/len(rows), -float(np.mean([r["seconds"] for r in wins])) if wins else 0.,
-            float(np.mean([r["seconds"] for r in rows])))
+    # Match the training objective; survival/completion are reported separately.
+    return (float(np.mean([r['reward'] for r in rows])),)
 
 
 class Trainer:
@@ -98,6 +97,9 @@ class Trainer:
             if self.cfg.get("rnd"):
                 for name in ("python/vision/range_sensor.py", "python/training/novelty.py", "unity-mod/src/RangeSensor.cs"):
                     self.signature["sources"][name] = hashlib.sha256(Path(name).read_bytes()).hexdigest()
+            if env_config.enemy_damage_reward or env_config.enemy_kill_reward:
+                for name in ('unity-mod/src/Combat.cs', 'unity-mod/src/CombatLedger.cs'):
+                    self.signature['sources'][name] = hashlib.sha256(Path(name).read_bytes()).hexdigest()
         torch.manual_seed(self.cfg["seed"])
         self.head = make_head(features, self.cfg, device)
         self.opt = torch.optim.Adam(self.head.parameters(), lr=self.cfg["learning_rate"], eps=1e-5)
@@ -142,15 +144,72 @@ class Trainer:
                 (self.run/"config.json").write_text(json.dumps(self.signature, indent=2))
         else:
             if warm_start:
-                if self.cfg.get("hidden"):
-                    raise ValueError("nonlinear runs start fresh; linear warm start is incompatible")
                 saved = torch.load(warm_start, map_location="cpu", weights_only=True)
                 if saved["signature"]["graph"] != self.signature["graph"] or saved["signature"]["width"] != features:
                     raise ValueError("incompatible warm start")
-                with torch.no_grad():
-                    for k in ("weight", "bias"):
-                        getattr(self.head, k)[:36].copy_(saved["head"][k][:36])
-                (self.run/"parent.json").write_text(json.dumps(dict(path=str(warm_start), progress=saved["progress"])))
+                if self.cfg.get('hidden'):
+                    old = saved['signature']
+                    reward_keys = {'enemy_damage_reward', 'enemy_kill_reward', 'combat_reward_cap'}
+                    reward_transfer = self.cfg.get('combat_reward_transfer', False)
+                    layout_transfer = self.cfg.get('sensor_layout_transfer', False)
+                    representation = self.signature.get('representation')
+                    if layout_transfer:
+                        if old['config'].get('encoder') != 'color-motion-rays-v1' or self.cfg.get('encoder') != 'color-motion-rays-v2':
+                            raise ValueError('sensor transfer requires audited v1 -> v2 layouts')
+                        representation = representation.replace('color-motion-rays-v2', 'color-motion-rays-v1', 1)
+                    old_env, new_env = old['environment'], self.signature['environment']
+                    if reward_transfer:
+                        old_env = {k:v for k,v in old_env.items() if k not in reward_keys}
+                        new_env = {k:v for k,v in new_env.items() if k not in reward_keys}
+                    if (old['config'].get('hidden') != self.cfg['hidden'] or
+                        old.get('representation') != representation or
+                        old_env != new_env):
+                        raise ValueError('nonlinear warm start requires the same representation and environment')
+                    transfer_changes = {'python/viewer/live.py', 'python/training/reservoir_ppo.py',
+                                        'python/training/novelty.py'}
+                    if reward_transfer:
+                        audited = {'unity-mod/src/Bridge.cs': 'ec81da30228c22fea1d1baa41cc5cf51394e38e779248749be520610c4c6e59d',
+                                   'python/environment/ship.py': 'fa282c862effc35b7b5ee39fb50d841e2b4b14944ba7e89e6bcb0e835c072555'}
+                        for name, digest in audited.items():
+                            if old.get('sources', {}).get(name) != digest:
+                                raise ValueError('combat transfer requires the audited bridge 0.8 parent')
+                        transfer_changes.update(audited)
+                    if layout_transfer:
+                        audited = {
+                            'unity-mod/src/Bridge.cs': '4f4aafedfa23f7e6fc8959f33359651f73479cffed4a540c789e7b11b3bb2a5b',
+                            'unity-mod/src/RangeSensor.cs': 'bdab21781e991505a309cc7ce8bad08f74a7674b46ff16d934240a608dca0467',
+                            'python/vision/range_sensor.py': '09d9a8449d5d99e7034c788269025e975a49236be3f00ed60c3ce737b09e4912',
+                            'python/environment/ship.py': 'bda30b733a41ca9e35eb21648b3754295ff74577799a6e2d427f1d29ec9e3ade',
+                            'python/communication/observe.py': 'fd792330e0ee5f17a6e55bf91201225b7a21a82239b3dd2fc1fe5561c2bafb31'}
+                        if any(old.get('sources', {}).get(name) != digest for name,digest in audited.items()):
+                            raise ValueError('sensor transfer parent sources do not match audited bridge 0.9')
+                        transfer_changes.update(audited)
+                    if any(name not in transfer_changes and self.signature.get('sources', {}).get(name) != digest
+                           for name, digest in old.get('sources', {}).items()):
+                        raise ValueError('warm start changed an encoder, graph dynamics dependency, or bridge')
+                    self.head.load_state_dict(saved['head'])
+                    self.opt.load_state_dict(saved['optimizer'])
+                    if self.novelty and not layout_transfer:
+                        if not saved.get('novelty'):
+                            raise ValueError('missing parent novelty state')
+                        self.novelty.load_state_dict(saved['novelty'])
+                        self.novelty.begin_episode()
+                    torch.set_rng_state(saved['rng'])
+                    if device == 'cuda':
+                        torch.cuda.set_rng_state(saved['cuda_rng'])
+                else:
+                    with torch.no_grad():
+                        for k in ("weight", "bias"):
+                            getattr(self.head, k)[:36].copy_(saved["head"][k][:36])
+                (self.run/"parent.json").write_text(json.dumps(dict(path=str(warm_start), progress=saved["progress"],
+                    checkpoint_sha256=hashlib.sha256(Path(warm_start).read_bytes()).hexdigest(),
+                    previous_signature=saved['signature'],
+                    nonlinear_full_state=bool(self.cfg.get('hidden')) and not self.cfg.get('sensor_layout_transfer', False),
+                    readout_optimizer_transferred=bool(self.cfg.get('hidden')),
+                    novelty_reset=bool(self.cfg.get('sensor_layout_transfer'))), indent=2))
+                if self.cfg.get('sensor_layout_transfer'):
+                    self.log('checkpoint-migrations', dict(reason='126-ray layout transfer; readout/optimizer retained; RND reset for 506-dimensional geometry',
+                        source=str(warm_start), previous_signature=saved['signature'], current_signature=self.signature))
             (self.run/"config.json").write_text(json.dumps(self.signature, indent=2))
             self.save_policy("initial", {"reason": "actor before first update"})
         self.writer = SummaryWriter(str(self.run / "tensorboard"))

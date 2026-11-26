@@ -13,7 +13,7 @@ using UnityEngine.SceneManagement;
 
 namespace NeonFly
 {
-    [BepInPlugin("local.neonfly.bridge", "NeonFly bridge", "0.8.0")]
+    [BepInPlugin("local.neonfly.bridge", "NeonFly bridge", "0.10.0")]
     public sealed class Bridge : BaseUnityPlugin
     {
         private const int MaxImage = 32 * 1024 * 1024;
@@ -59,10 +59,15 @@ namespace NeonFly
             public int health, maxHealth, maxBullets, maxRockets, money;
             public double damageFraction;
             public bool controlled;
-            public string bridgeVersion = "0.8.0";
+            public string bridgeVersion = "0.10.0";
+            public int combatVersion = 1;
+            public double combatDamageFraction;
+            public int combatKills, combatHits;
             public bool sensorValid, sensorInsideView;
+            public string sensorLayout = RangeSensor.Layout;
+            public int sensorRayCount = RangeSensor.RayCount;
             public float sensorRange, sensorVx, sensorVy, sensorScreenX, sensorScreenY;
-            public float[] sensorDistance, sensorVisible, sensorVisibleStart, sensorGeometryDistance;
+            public float[] sensorAngles, sensorDistance, sensorVisible, sensorVisibleStart, sensorGeometryDistance;
             public int[] sensorKind, sensorGeometryKind;
         }
 
@@ -149,6 +154,7 @@ namespace NeonFly
                     var scan = RangeSensor.Capture(ship);
                     var status = new Status { scene = SceneManager.GetActiveScene().name,
                         sensorValid = scan.valid, sensorInsideView = scan.insideView, sensorRange = scan.range,
+                        sensorAngles = scan.angles,
                         sensorDistance = scan.distance, sensorVisible = scan.visible,
                         sensorVisibleStart = scan.visibleStart,
                         sensorKind = scan.kind, sensorGeometryDistance = scan.geometryDistance,
@@ -169,6 +175,8 @@ namespace NeonFly
                         health = health ? health.CurrentHealth : 0, maxHealth = health ? health.MaxHealth : -1,
                         money = MoneyManager.Instance ? MoneyManager.Instance.GetMoney() : -1,
                         damageFraction = GameAdapter.DamageFraction, controlled = controlled,
+                        combatDamageFraction = Combat.Ledger.DamageFraction,
+                        combatKills = Combat.Ledger.Kills, combatHits = Combat.Ledger.Hits,
                         x = actor ? actor.transform.position.x : 0, y = actor ? actor.transform.position.y : 0,
                         buttons = r.Op == 1 ? GameAdapter.Buttons() : null };
                     if (r.Op == 2 || r.IsStep || r.Op == 6 || r.Op == 10)

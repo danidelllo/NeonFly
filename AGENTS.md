@@ -29,16 +29,71 @@ PowerShell from the checkout root. Current working setup was verified on
 | Game root | `C:\Program Files (x86)\Steam\steamapps\common\NEONSKY` |
 | Steam app ID | `4546400` |
 | Engine / loader | Unity 2022.3.62f3, Mono x64; BepInEx **5.4.23.6** |
-| Installed bridge | `BepInEx\plugins\NeonFly.dll`, version **0.8.0** |
+| Installed bridge | `BepInEx\plugins\NeonFly.dll`, version **0.10.0** |
 | Local Python | `.venv\Scripts\python.exe`, Python 3.13 |
 | Verified GPU stack | RTX 4070; `torch==2.9.1+cu128` |
 | Unity bridge | `127.0.0.1:47651` |
 | Sole model/controller server | `http://127.0.0.1:47652/` |
 | Observer / preferred viewer | `http://127.0.0.1:47653/` |
-| Most recent active run | `flywire-sensor-005` — query live state to confirm |
-| Current run configuration | `configs/sensor_ppo.toml`, `configs/sensor_ship.toml` |
+| Most recent active run | `flywire-dqn-012` — query live state to confirm |
+| Current run configuration | `configs/disk_dqn.toml`, `configs/heavy_combat_ship.toml` |
 | Run state | `checkpoints/<run>/`, `logs/ppo/<run>/` |
-| Launch logs | `logs/launch/`; current controls launch uses `flywire-sensor-005-controls-final-{out,err}.txt` |
+| Launch logs | `logs/launch/flywire-dqn-012-resume-{out,err}.txt` |
+
+Current run 012 continues 011 with **1,000,000 disk-backed replay transitions**
+(user superseded earlier 20-million request). See `docs/DISK_REPLAY_RUN.md`.
+All 593 source transitions, networks/optimizer/RNG and counters were migrated
+at episode 20. Capacity-only continuation, not a fresh experiment. Packed disk
+feature data grows to about 17 GB for a million active transitions; checkpoints
+share immutable chunk files. KEEP `checkpoints/flywire-dqn-012/replay-data` with
+all model checkpoints. Older checkpoints remain restorable after newer writes.
+No automatic chunk deletion; historical checkpoint retention can exceed active
+capacity on disk. Priorities/tree indexes use about 38 MB RAM plus sampled pages.
+Use `configs/disk_dqn.toml`, `configs/heavy_combat_ship.toml`, run 012 in current
+commands. Exact reward structure remains destruction +5, death -100. A full-width
+packed-record stride issue was fixed before learning; original checkpoints and
+an explicit audit are in before-contiguous-fix/ and contiguous-fix-audit.json.
+Latest launch logs are flywire-dqn-012-resume-{out,err}.txt. 56 tests and full-width
+CUDA disk-read check passed. Standard resume signature checks remain strict.
+
+Historical run 011 uses user-requested rewards: destruction +5, death -100;
+all other task coefficients unchanged. Fresh learner/replay with same DQN and
+fixed connectome/input mapper. See `docs/HEAVY_REWARD_RUN.md`. Old DQN-010
+lost its game bridge at episode 320; checkpoint 320 / gradient update 3804 is
+preserved. Never transfer old-scale replay into the new run. Current operational
+commands below use 011 and heavy_combat_ship.toml. Historical experiments need
+their own original environment config, not the current heavy reward config.
+
+The DQN architecture is **Double/dueling DQN with prioritized experience replay**,
+requested by the user. See `docs/DQN_RUN.md` and `configs/dqn.toml`. Fresh
+readout, target network, optimizer and replay; fixed connectome/mapping intact.
+Replay contains task rewards only; RND/coverage bonuses disabled. Epsilon-greedy
+exploration 1.0 -> 0.05 over 25,000 decisions. Budget 512 training episodes;
+five greedy evaluations every 20 episodes, initially and finally. Best selection
+is **highest mean evaluation task reward only** (no survival/completion override).
+Full replay/target/optimizer/RNG checkpoints every 20 episodes regardless of
+score; latest every four, after evaluations and on STOP. Resume strictly with
+matching source/config. UI labels Q values and DQN, not PPO probabilities.
+Clean-009 stopped at episode 278 / update 69; latest checkpoint is episode 276.
+Two later logged episodes were an unsaved partial PPO batch. Preserve all old
+models and source snapshots. Old PPO resumptions require their old source files;
+do not bypass signature checks. Current commands below use DQN-010.
+
+Historical run 008 had a **512-training-episode budget**; do not add `--continuous` or
+retune it mid-budget. See `docs/DENSE_SENSOR_RUN.md`. It inherits combat-007's
+evaluation-selected readout/optimizer but resets RND for the new 506-dimensional
+geometry vector. The user requested 126 rays: front 55, top 8, behind 8, below 55
+in four 90-degree sectors. Every ray/body channel has exactly three neuron
+destinations (2,658 mapped, 16 spare). Bridge 0.10 exports the actual angles.
+Combat-007 stopped cleanly at episode 100 / update 25 for this requested change.
+The user previously explicitly overrode the prior
+deferred handoff and requested an immediate launch with combat/exploration
+reward caps removed. Combat aggregate, exploration per-step and exploration
+per-episode caps are all disabled (zero settings); duplicate credit guards stay.
+Coverage-006 stopped early at episode 340 / update 85, not its planned 512.
+Run 005 stopped at episode 552 / update 138. All old checkpoints are preserved.
+The old `python.operations.combat_handoff` helper is **cancelled**. Do not
+restart it or launch a second controller. Bridge 0.10 is installed already.
 
 Dependencies, datasets, builds, checkpoints and logs are ignored by Git. A fresh
 clone does **not** contain the trained model or FlyWire numerical data. Do not
@@ -138,7 +193,7 @@ Copy-Item -LiteralPath 'unity-mod\build\NeonFly.dll' -Destination "$gameRoot\Bep
 ```
 
 Then launch normally through Steam and check
-`$gameRoot\BepInEx\LogOutput.log` for bridge 0.8.0 and the listener on 47651.
+`$gameRoot\BepInEx\LogOutput.log` for bridge 0.10.0 and the listener on 47651.
 The runtime authentication key is `%LOCALAPPDATA%\NeonFly\session.key`; never
 print, copy to Git, or replace it manually. It changes on every game launch.
 Source changes to Unity code require build, install, **and game restart**.
@@ -180,8 +235,8 @@ and status is Level_1:
 
 ```powershell
 # A STOP marker is an intentional stop request. Remove it only when resuming.
-Remove-Item -LiteralPath 'logs\ppo\flywire-sensor-005\STOP' -ErrorAction SilentlyContinue
-.\.venv\Scripts\python.exe -u -m python.viewer.serve --train-run flywire-sensor-005 --config configs/sensor_ppo.toml --env-config configs/sensor_ship.toml --resume --continuous --device cuda
+Remove-Item -LiteralPath 'logs\ppo\flywire-dqn-012\STOP' -ErrorAction SilentlyContinue
+.\.venv\Scripts\python.exe -u -m python.viewer.serve --train-run flywire-dqn-012 --config configs/disk_dqn.toml --env-config configs/heavy_combat_ship.toml --resume --device cuda
 ```
 
 This foreground command stays running. Use another shell to open the viewer:
@@ -213,7 +268,7 @@ and verify command lines rather than reusing old PIDs.
 
 Fresh training on a new checkout: use a **new unique run name** and omit
 `--resume`; keep both sensor config arguments. Never reuse an existing run name
-to start over. `--continuous` bypasses the configured update limit, not checks,
+to start over. For other deliberately uncapped runs, `--continuous` bypasses the configured update limit, not checks,
 evaluation or checkpointing. `Continue-Training.ps1` is a legacy capped-run
 handoff using default configs; do not use it for the current sensor run.
 
@@ -230,26 +285,27 @@ handoff using default configs; do not use it for the current sensor run.
 - Terminal Step shows the final state and holds before reset. A subsequent Step
   can reset the episode, then execute one action. Terminal activity is from the
   last decision; bars saturate lethal negative health for display only.
-- `latest.pt`: full state after each policy update (four training episodes).
+- DQN `latest.pt`: full state every four training episodes, after evaluations
+  and on graceful STOP. PPO historical latest was saved per four-episode update.
   `episode-000020.pt`, etc.: permanent snapshots every 20 training episodes.
   `best.pt`: selected by frozen evaluation; may not exist yet in a new run.
-- State includes policy/value, policy optimizer and RNG, RND target/predictor,
-  predictor optimizer, replay buffer/RNG/calibration and source/config signatures.
-  Full snapshots also support pending batches where saved explicitly.
-- Best ranking: completion rate, then faster successful completion, then mean
-  survival. Evaluations use task reward only and do not learn.
+- DQN state includes online/target Q heads, optimizer, replay features/targets/
+  priorities/cursor/RNG, action and Torch RNGs, evaluation ranking/scheduling,
+  counters and source/config signatures. Historical PPO included novelty state.
+- Best ranking: highest mean evaluation task reward only. Completion and
+  survival are diagnostics. Evaluations do not learn or add replay.
 
 Request a graceful stop with:
 
 ```powershell
-New-Item -ItemType File -Force 'logs\ppo\flywire-sensor-005\STOP' | Out-Null
+New-Item -ItemType File -Force 'logs\ppo\flywire-dqn-012\STOP' | Out-Null
 ```
 
 STOP is checked between episodes. If paused mid-episode, Play is needed to finish
-that episode. Stopping mid-batch loses unsaved episodes since the last update.
-For a no-loss handoff, set STOP while the active **non-evaluation** episode number
-is divisible by four, before it ends; wait for the update and stop message. Verify
-the checkpoint progress before restarting. Do not just kill the trainer/game.
+that episode. DQN saves latest at the training episode boundary on STOP, including
+replay and optimizer state. A STOP during evaluation retains the last completed
+training state. Verify checkpoint progress before restarting; do not kill the
+trainer/game. The historical PPO worker only saved complete four-episode batches.
 
 To restore another full snapshot, use `--resume-from checkpoints/<run>/episode-XXXXXX.pt`
 instead of `--resume`, keeping the matching run/config. It restores learning state,
@@ -257,7 +313,7 @@ not the exact Unity scene. A new episode is started. Keep the current checkpoint
 before rolling back. Frozen three-episode best replay, with the trainer stopped:
 
 ```powershell
-.\.venv\Scripts\python.exe -m python.viewer.serve --replay-best flywire-sensor-005 --device cuda
+.\.venv\Scripts\python.exe -m python.viewer.serve --replay-best flywire-dqn-012 --device cuda
 ```
 
 Source signatures are byte-sensitive. CRLF/LF conversion on another checkout can
@@ -273,7 +329,8 @@ checkpoint-only viewer-control predecessor migration is explicit in
 - `unity-mod/src/Bridge.cs`: authenticated loopback requests and end-of-frame
   screenshots; controlled steps hold `Time.timeScale=0` between actions.
   `GameAdapter.cs`: full ship controls, normal resets, death/completion events.
-- `RangeSensor.cs`: 32 world-space rays, 12-unit range, clipped to camera entry
+- `RangeSensor.cs`: 126 world-space rays (front/below 55 each, top/back 8 each),
+  12-unit range, clipped to camera entry
   **and exit**. Offscreen ship origins still sense visible segments. Never query
   offscreen geometry. Added `visibleStart` telemetry in bridge 0.8.0.
 - Categories: solid; damageable via `EnemyHealth`; enumerated hostile projectile
@@ -286,16 +343,32 @@ checkpoint-only viewer-control predecessor migration is explicit in
 - `vision/connectome.py`: four RGB 84x84 frames -> six 42x42 maps (brightness,
   red-green, blue-yellow, short/long motion, edges). Seeded artificial mapping to
   11,234 visual neurons plus 64 each for health/bullets/rockets (192 total).
-- `vision/range_sensor.py`: 32x7 ray channels + four body channels = 228 scalars
-  mapped to 2,674 existing mechanosensory neurons. This is artificial encoding,
-  not a biological radar. All-input tracing totals **14,100 neuron links**.
+- `vision/range_sensor.py`: 126x7 ray channels + four body channels = 886 scalars,
+  exactly three copies onto 2,658 existing mechanosensory neurons. Sixteen spare
+  cells stay in the recurrent graph without direct drive. This is artificial
+  encoding, not a biological radar. All-input tracing totals **14,084 links**.
+  Legacy v1 packets/mapping (32 rays, 2,674 cells) remain decodable with the old
+  bridge, but cannot be silently fed the new 126-ray packet. v2 validates angles.
 - `viewer/live.py`: fixed 139,255-cell recurrent graph; three leaky tanh substeps.
   1,415 readout neurons provide current/delta/EMA = 4,245 features. Learned
   nonlinear head: 256 -> 128 -> 36 action scores plus value. No trainable recurrent
   synapses. See `training/heads.py`, `training/reservoir_ppo.py`.
-- `training/novelty.py`: capped geometry RND, with predictor replay only. PPO uses
-  recent on-policy episodes, **not experience replay**. Offscreen ship states
-  still receive no novelty bonus. Rewards/config are in the two sensor TOMLs.
+- `training/reservoir_dqn.py`: current Double/dueling DQN, n-step returns,
+  prioritized replay, importance weighting, target network and full resumable
+  state. Store immutable reservoir feature pairs and task rewards only. DQN
+  updates at episode boundaries; no trainable recurrent cells.
+- `training/novelty.py`: geometry RND with optional caps and predictor replay only. Run 006
+  additionally rewards first visits to uniform 12x8 viewport cells per episode,
+  with the combined bonus capped at 0.25 per episode. Damaging/death transitions
+  earn no bonus. Visible offscreen-origin states count as boundary cells, not
+  extra exploration space. PPO uses recent on-policy episodes, **not experience
+  replay**. Run 006's entropy coefficient is 0.005 (formerly 0.02). Details and
+  exact settings: `docs/COVERAGE_RUN.md`, `configs/coverage_ppo.toml`.
+- Run 007 disables aggregate combat and exploration reward caps. Damage reward
+  is 0.05 per full target health bar, plus 0.10 per distinct destruction, attributed
+  only to player-owned weapons. `Combat.cs` and `CombatLedger.cs` provide the
+  counters. Task return includes combat shaping; `base_task_reward` excludes it.
+  Evaluation still excludes exploration, and checkpoint ranking is unchanged.
 - `viewer/control.py`: shared action-boundary Pause/Step/Play state; worker alone
   contacts Unity. `viewer/serve.py`: main HTTP service and observer proxy.
   POST controls require same Origin, exact loopback Host and session token.
@@ -323,7 +396,10 @@ radar panel to filter tracing; Shift-click a visual pixel for exact assignments.
 .\.venv\Scripts\python.exe -m python.tests.verify_viewer_graph
 ```
 
-Last verified: 30 Python tests and 10,012 C# clipping cases. The live test scripts
+Last verified: 51 Python tests, full-width CUDA DQN replay preflight, viewer JS syntax; historical, combat accounting/installed-game IL checks,
+126-angle sector checks and 10,012 C# clipping cases. Bridge 0.10 loaded and its
+live 126-ray/886-channel/506-geometry packet was validated.
+The live test scripts
 `python.tests.live_ship` / `live_ship_controls` **drive and reset the game**;
 never run them alongside training. Do not rerun expensive checks for docs-only edits.
 
@@ -333,7 +409,7 @@ never run them alongside training. Do not rerun expensive checks for docs-only e
 | Expected Level_1, found Cutscene | Wait/skip normal cutscene; restart only the failed controller afterward. |
 | Viewer serves but no new samples | `/control` may be deliberately paused; otherwise inspect launch stderr and worker. Static graph endpoints are not proof of training. |
 | Bridge disconnected / key changed | Game closed/restarted. Do not retry an uncertain action. Restore a valid normal scene and resume the latest full checkpoint. |
-| Empty radar near ceiling | Confirm bridge 0.8 installed and restarted. 0.7 blanked every ray when the collider center was outside camera. See `docs/SENSOR_FIX_RUN.md`. |
+| Empty radar near ceiling | Confirm bridge 0.8 or newer installed and restarted. 0.7 blanked every ray when the collider center was outside camera. See `docs/SENSOR_FIX_RUN.md`. |
 | UI edit not visible | Restart only observer 47653, then reload. Verify owning process command line before stopping it. Never stop 47652 for CSS changes. |
 | Observer missing | Reopen launcher only after confirming the intended controller exists; otherwise the launcher creates a demo. |
 | Source/config mismatch | Compare checkpoint signature, source snapshot, configs and line endings. Do not suppress the error. |

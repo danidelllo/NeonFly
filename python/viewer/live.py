@@ -15,14 +15,14 @@ from python.environment.ship import ShipConfig, ShipEnv
 from python.viewer.prepare import DATA
 from python.viewer.policy import demo_weights
 from python.vision.connectome import ENCODER, visual_channels, sensory_mapping, resources, preview
-from python.vision.range_sensor import RAY_ENCODER, sensor_mapping, sensor_vector
+from python.vision.range_sensor import RAY_ENCODER, RAY_ENCODERS, LEGACY_RAY_ENCODER, SENSOR_WIDTH, sensor_mapping, sensor_vector
 
 
 class Reservoir:
     def __init__(self, device, encoder=None):
         load = lambda name: np.load(DATA / (name + ".npy"))
         self.device = device
-        if encoder not in (None, ENCODER, RAY_ENCODER):
+        if encoder not in (None, ENCODER, *RAY_ENCODERS):
             raise ValueError("unknown fixed encoder")
         self.encoder = encoder
         def tensor(array):
@@ -53,8 +53,8 @@ class Reservoir:
             self.visual = tensor(visual)
             self.pixels = tensor(slots)
             self.resource_neurons = tensor(resource_neurons)
-        if encoder == RAY_ENCODER:
-            neurons, slots = sensor_mapping()
+        if encoder in RAY_ENCODERS:
+            neurons, slots = sensor_mapping(encoder)
             self.range_neurons = tensor(neurons)
             self.range_slots = tensor(slots)
         self.clear()
@@ -72,8 +72,11 @@ class Reservoir:
             self.visual_maps = visual_channels(image)
             drive = self.visual_maps.flatten()[self.pixels]
             resource_drive = torch.tensor(resources(game), device=self.device).repeat_interleave(64)
-            if self.encoder == RAY_ENCODER:
+            if self.encoder in RAY_ENCODERS:
                 self.range_drive = sensor_vector(game, self.previous_sensor)
+                expected_width = 32*7+4 if self.encoder == LEGACY_RAY_ENCODER else SENSOR_WIDTH
+                if len(self.range_drive) != expected_width:
+                    raise ValueError('Installed sensor layout does not match the policy encoder')
                 range_drive = torch.from_numpy(self.range_drive).to(self.device)[self.range_slots]
                 self.previous_sensor = game
         else:
@@ -84,7 +87,7 @@ class Reservoir:
             z[self.visual, 0] += drive
             if self.encoder:
                 z[self.resource_neurons, 0] += resource_drive
-            if self.encoder == RAY_ENCODER:
+            if self.encoder in RAY_ENCODERS:
                 z[self.range_neurons, 0] += range_drive
             self.state = 0.4*self.state + 0.6*torch.tanh(z)
         outputs = self.state[self.outputs, 0]
@@ -134,9 +137,12 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
         replay = None
         eval_rows = []
         if train_run:
-            from python.training.reservoir_ppo import Trainer
+            if cfg.get('algorithm') == 'dqn':
+                from python.training.reservoir_dqn import Trainer
+            else:
+                from python.training.reservoir_ppo import Trainer
             trainer = Trainer(train_run, model.feature_width, device, env.config, resume, warm_start, config_path)
-            if len(trainer.returns) == trainer.cfg["episodes_per_update"]:
+            if cfg.get('algorithm') != 'dqn' and len(trainer.returns) == trainer.cfg["episodes_per_update"]:
                 trainer.update()
         if replay_run:
             from python.training.reservoir_ppo import ReplayPolicy
@@ -156,7 +162,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
             manual_stop = trainer and (trainer.run/"STOP").exists()
             if trainer and (manual_stop or (not continuous and trainer.finished() and not evaluating)):
                 trainer.writer.close()
-                messages.put(("complete", f"PPO stopped at update {trainer.updates}, {trainer.steps} steps."))
+                messages.put(("complete", f"{cfg.get('algorithm', 'ppo').upper()} stopped at update {trainer.updates}, {trainer.steps} steps."))
                 return
             if control and initialized and not control.wait(stop, hold):
                 return
@@ -164,13 +170,14 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
             initialized = True
             model.clear()
             if trainer and trainer.novelty:
-                trainer.novelty.begin_episode()
+                trainer.novelty.begin_episode(info['game'])
             if not evaluating:
                 episodes += 1
             trajectory = []
             elapsed_ticks = 0
             episode_return = 0.
             extrinsic_return = intrinsic_return = 0.
+            base_task_return = 0.
             reward_terms = dict(survival=0., damage=0., terminal=0.)
             actions = np.zeros(36, dtype=np.int64)
             while not stop.is_set():
@@ -192,8 +199,15 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                             timestamp=time.time(), side=84, count=model.n)
                 if trainer:
                     meta.update(training=True, evaluating=bool(evaluating), update=trainer.updates, run=train_run)
+                    meta['algorithm'] = cfg.get('algorithm', 'ppo')
+                    if cfg.get('algorithm') == 'dqn':
+                        meta.update(epsilon=trainer.epsilon, replaySize=trainer.memory.size)
+                    if trainer.novelty and trainer.novelty.coverage_enabled:
+                        meta['exploration'] = 'episodic-coverage+rnd'
+                    meta['combatRewards'] = bool(env.config.enemy_damage_reward or env.config.enemy_kill_reward)
                 if replay:
                     meta.update(replay=True, run=replay_run, update=replay.saved["progress"][2])
+                    meta['algorithm'] = cfg.get('algorithm', 'ppo')
                 if model.encoder:
                     with torch.no_grad():
                         scores = (trainer or replay).head(torch.nn.functional.layer_norm(features, features.shape))[:36]
@@ -203,7 +217,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                     meta["inputMaps"] = dict(side=42, count=6, encoding="float32-le",
                         data=base64.b64encode(model.visual_maps.cpu().numpy().astype("<f4", copy=False).tobytes()).decode("ascii"))
                     meta["resourceDrive"] = resources(game)
-                    if model.encoder == RAY_ENCODER:
+                    if model.encoder in RAY_ENCODERS:
                         meta["rays"] = game["rays"]
                 header = json.dumps(meta, separators=(",", ":")).encode()
                 packet = struct.pack("<I", len(header))+header+preview(obs).tobytes()+activation.astype("<f4", copy=False).tobytes()
@@ -215,14 +229,17 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                 if control:
                     control.completed()
                 extrinsic_return += reward
+                base_task_return += info.get('base_task_reward', reward)
                 if trainer and trainer.novelty and not evaluating and info["game"].get("rays", {}).get("valid"):
-                    intrinsic = trainer.novelty.reward(info["game"])
+                    safe_bonus = not done and (not trainer.cfg.get('novelty_skip_damage') or
+                                                info.get('reward_terms', {}).get('damage', 0.) >= 0)
+                    intrinsic = trainer.novelty.reward(info["game"], allow_bonus=safe_bonus)
                     intrinsic_return += intrinsic
                     reward += intrinsic
                 episode_return += reward
                 actions[action] += 1
                 for key, value in info.get("reward_terms", {}).items():
-                    reward_terms[key] += value
+                    reward_terms[key] = reward_terms.get(key, 0.)+value
                 if trainer and not evaluating:
                     trajectory.append((sample, reward))
                     elapsed_ticks += info["elapsed_ticks"]
@@ -239,14 +256,16 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                                 data=base64.b64encode(visual_channels(torch.from_numpy(obs.copy()).to(device))
                                     .cpu().numpy().astype('<f4', copy=False).tobytes()).decode('ascii'))
                             terminal_meta['resourceDrive'] = terminal_resources(game, meta['resourceDrive'])
-                            if model.encoder == RAY_ENCODER:
+                            if model.encoder in RAY_ENCODERS:
                                 terminal_meta['rays'] = game['rays']
                         header = json.dumps(terminal_meta, separators=(',', ':')).encode()
                         terminal_packet = struct.pack('<I', len(header))+header+preview(obs).tobytes()+activation.astype('<f4', copy=False).tobytes()
                         while not stop.is_set() and not notify('frame', terminal_packet):
                             time.sleep(.01)
                     if evaluating:
-                        eval_rows.append(dict(reward=episode_return, seconds=info["survived_seconds"],
+                        eval_rows.append(dict(reward=episode_return, base_task_reward=base_task_return,
+                                              combat_reward=reward_terms.get('combat_damage', 0.)+reward_terms.get('combat_kill', 0.),
+                                              seconds=info["survived_seconds"],
                                               reason=info["reason"]))
                         if len(eval_rows) == trainer.cfg["eval_episodes"]:
                             trainer.finish_eval(eval_rows)
@@ -257,12 +276,21 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                             messages.put(("complete", "Three frozen-policy replay episodes completed."))
                             return
                     elif trainer:
-                        bootstrap = trainer.value(model.advance(obs, info["game"])) if cut and not done else 0.0
+                        if cfg.get('algorithm') == 'dqn':
+                            bootstrap = (torch.nn.functional.layer_norm(
+                                model.advance(obs, info['game']), features.shape).cpu().numpy()
+                                if cut and not done else np.zeros(model.feature_width, np.float32))
+                        else:
+                            bootstrap = trainer.value(model.advance(obs, info["game"])) if cut and not done else 0.0
                         trainer.end_episode(trajectory, bootstrap, info["reason"], elapsed_ticks,
                                             info["survived_seconds"], dict(reward_terms={**reward_terms, "novelty": intrinsic_return},
                                                 extrinsic_reward=extrinsic_return, intrinsic_reward=intrinsic_return,
+                                                base_task_reward=base_task_return,
+                                                combat_damage_fraction=info.get('combat_damage_fraction', 0.),
+                                                combat_kills=info.get('combat_kills', 0),
+                                                exploration=dict(trainer.novelty.stats) if trainer.novelty else {},
                                                 damage_fraction=info.get("damage_fraction", 0.), actions=actions.tolist()))
-                        if len(trainer.returns) == trainer.cfg["episodes_per_update"]:
+                        if cfg.get('algorithm') != 'dqn' and len(trainer.returns) == trainer.cfg["episodes_per_update"]:
                             trainer.update()
                     break
     except Exception:

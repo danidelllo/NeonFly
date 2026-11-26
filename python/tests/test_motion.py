@@ -98,6 +98,13 @@ class LearningTests(unittest.TestCase):
             torch.testing.assert_close(trainer.head(x), resumed.head(x))
             self.assertEqual(resumed.opt.state_dict()["param_groups"], trainer.opt.state_dict()["param_groups"])
             self.assertEqual(resumed.episodes, 20)
+            warm = Trainer('warm', 12, 'cpu', ShipConfig(), warm_start=archive, config_path='config.toml')
+            torch.testing.assert_close(warm.head(x), trainer.head(x))
+            self.assertEqual(warm.opt.state_dict()['param_groups'], trainer.opt.state_dict()['param_groups'])
+            self.assertEqual((warm.steps, warm.episodes, warm.updates), (0, 0, 0))
+            self.assertIsNone(warm.best)
+            self.assertTrue((warm.run/'parent.json').exists())
+            warm.writer.close()
             # A first-win/episode-boundary snapshot must preserve a partial PPO batch.
             resumed.end_episode(trajectory[:3], 0., "death", 12, .24)
             resumed.save_policy("partial", {"test": True})

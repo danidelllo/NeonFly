@@ -29,6 +29,9 @@ class ShipConfig:
     damage_penalty: float = 0.0
     max_seconds: float = 0.0
     sensors: bool = False
+    enemy_damage_reward: float = 0.0
+    enemy_kill_reward: float = 0.0
+    combat_reward_cap: float = 1.0
 
     def __post_init__(self):
         for value, low, high in ((self.action_ticks, 1, 32), (self.max_steps, 1, 1_000_000),
@@ -41,13 +44,16 @@ class ShipConfig:
             raise ValueError("crop must contain four integer pixel coordinates")
         if not all(type(v) in (int, float) and math.isfinite(v) for v in (
                 self.living_reward_per_applied_tick, self.death_reward, self.completion_reward,
-                self.survival_per_second, self.survival_cap_seconds, self.damage_penalty, self.max_seconds)):
+                self.survival_per_second, self.survival_cap_seconds, self.damage_penalty, self.max_seconds,
+                self.enemy_damage_reward, self.enemy_kill_reward, self.combat_reward_cap)):
             raise ValueError("reward coefficients must be finite")
         if self.survival_per_second < 0 or self.survival_cap_seconds <= 0 or (
                 self.survival_per_second and self.living_reward_per_applied_tick):
             raise ValueError("choose only one survival reward clock and a positive cap")
         if self.damage_penalty < 0 or self.max_seconds < 0:
             raise ValueError("damage penalty and time limit must be nonnegative")
+        if self.enemy_damage_reward < 0 or self.enemy_kill_reward < 0 or self.combat_reward_cap < 0:
+            raise ValueError('combat rewards/cap must be nonnegative; zero cap disables clipping')
 
     @classmethod
     def load(cls, path):
@@ -74,8 +80,11 @@ class ShipEnv(gym.Env):
         self.active = False
         self._key = self._key_path.read_bytes()
         before, _ = request(1)
-        if self.config.controlled and before.get("bridgeVersion") not in ("0.6.0", "0.7.0", "0.8.0"):
-            raise RuntimeError("controlled training requires NeonFly 0.6, 0.7 or 0.8")
+        if self.config.controlled and before.get("bridgeVersion") not in ("0.6.0", "0.7.0", "0.8.0", "0.9.0", "0.10.0"):
+            raise RuntimeError("controlled training requires NeonFly 0.6 through 0.10")
+        self.combat_enabled = bool(self.config.enemy_damage_reward or self.config.enemy_kill_reward)
+        if self.combat_enabled and before.get('combatVersion') != 1:
+            raise RuntimeError('combat rewards require bridge 0.9 combat telemetry')
         if self.config.survival_per_second and "physicsSeconds" not in before:
             raise RuntimeError("simulation-time reward requires NeonFly 0.5")
         if before.get("shipActionCount") != self.action_space.n:
@@ -96,12 +105,24 @@ class ShipEnv(gym.Env):
         self.steps = 0
         self.survived = 0.0
         self.damage = state.get("damageFraction", 0.)
+        self.combat_spent = 0.
+        self.enemy_damage = state.get('combatDamageFraction', float('nan') if self.combat_enabled else 0.)
+        self.enemy_kills = state.get('combatKills', None if self.combat_enabled else 0)
+        if self.combat_enabled:
+            if state.get('combatVersion') != 1:
+                raise RuntimeError('missing combat telemetry on reset')
+            self._validate_combat(self.enemy_damage, self.enemy_kills)
         if self.config.damage_penalty and ("damageFraction" not in state or state.get("maxHealth", 0) <= 0):
             raise RuntimeError("damage reward requires verified health telemetry")
         self.completed = False
         obs = self.visual.push(png, reset=True)
         self.active = True
         return obs, {"game": state}
+
+    @staticmethod
+    def _validate_combat(damage, kills):
+        if not math.isfinite(damage) or damage < 0 or type(kills) is not int or kills < 0:
+            raise RuntimeError('invalid combat counters')
 
     def _events(self, state):
         deaths = state["deaths"] - self.origin["deaths"]
@@ -160,6 +181,24 @@ class ShipEnv(gym.Env):
         damage_delta = damage - self.damage
         reward -= self.config.damage_penalty * damage_delta
         self.damage = damage
+        combat_damage = combat_kill = 0.
+        if self.combat_enabled:
+            if state.get('combatVersion') != 1:
+                raise RuntimeError('combat telemetry disappeared')
+            enemy_damage, enemy_kills = state.get('combatDamageFraction', float('nan')), state.get('combatKills')
+            self._validate_combat(enemy_damage, enemy_kills)
+            if enemy_damage < self.enemy_damage or enemy_kills < self.enemy_kills:
+                raise RuntimeError('combat counter decreased within an episode')
+            requested_damage = self.config.enemy_damage_reward*(enemy_damage-self.enemy_damage)
+            requested_kills = self.config.enemy_kill_reward*(enemy_kills-self.enemy_kills)
+            requested = requested_damage+requested_kills
+            paid = (min(requested, max(0., self.config.combat_reward_cap-self.combat_spent))
+                    if self.config.combat_reward_cap > 0 else requested)
+            ratio = paid/requested if requested > 0 else 0.
+            combat_damage, combat_kill = requested_damage*ratio, requested_kills*ratio
+            self.combat_spent += paid
+            self.enemy_damage, self.enemy_kills = enemy_damage, enemy_kills
+            reward += paid
         truncated = not terminated and (truncated or bool(self.config.max_seconds and self.survived >= self.config.max_seconds))
         self.completed = completed
         reason = "death" if died else "completion" if completed else "time_limit" if truncated else None
@@ -168,7 +207,11 @@ class ShipEnv(gym.Env):
         return obs, float(reward), terminated, truncated, {
             "game": state, "reason": reason, "applied_ticks": ticks, "elapsed_ticks": elapsed,
             "survived_seconds": self.survived, "damage_fraction": damage - self.origin.get("damageFraction", 0.),
-            "reward_terms": dict(survival=reward - (died*self.config.death_reward + completed*self.config.completion_reward)
+            "base_task_reward": float(reward-combat_damage-combat_kill),
+            "combat_damage_fraction": self.enemy_damage-self.origin.get('combatDamageFraction', 0.),
+            "combat_kills": self.enemy_kills-self.origin.get('combatKills', 0),
+            "reward_terms": dict(survival=reward - combat_damage-combat_kill - (died*self.config.death_reward + completed*self.config.completion_reward)
                                  + self.config.damage_penalty*damage_delta,
                                  damage=-self.config.damage_penalty*damage_delta,
-                                 terminal=died*self.config.death_reward + completed*self.config.completion_reward)}
+                                 terminal=died*self.config.death_reward + completed*self.config.completion_reward,
+                                 combat_damage=combat_damage, combat_kill=combat_kill)}

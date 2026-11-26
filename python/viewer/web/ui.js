@@ -17,6 +17,7 @@ async function run(){
   for(const i of inputs)roles[i]|=1;
   for(const i of outputs)roles[i]|=2;
   for(const i of rangeNeurons)roles[i]|=4;
+  $('rangeCount').textContent=fmt(rangeNeurons.length);
   const radar=rangeRadar();
   $("inputCount").textContent=fmt(inputs.length);$("outputCount").textContent=fmt(outputs.length);
   for(const key of ["nodes","edges","synapses"])$(key).textContent=fmt(meta[key]);
@@ -116,7 +117,7 @@ async function run(){
     $("metrics").textContent=`${m.device.toUpperCase()} · ${m.inferenceMs} ms inference · ${frame&&m.timestamp>frame.timestamp?((m.seq-seq)/(m.timestamp-frame.timestamp)).toFixed(1):"—"} decisions/s · ${m.drops} publisher drops`;
     $("live").textContent="● Live";frame=m;seq=m.seq;signal();radar.sample(m);
     $('rangeInputOption').hidden=!m.rays; sensory?.sample(m,act);circuit.sample(m,act);
-    if(m.training||m.replay){$("live").textContent=m.replay?"► Best replay":`${m.evaluating?"◇ Evaluating":"● PPO"} · update ${m.update}`;$("modelNote").textContent=m.rays?"Fixed full FlyWire reservoir · vision + 32-ray inputs. PPO learns the readout with capped geometry novelty during training; evaluation uses task reward only.":"Fixed full FlyWire reservoir. PPO learns the readout; evaluation and best-policy replay use frozen weights."}
+    if(m.training||m.replay){$("live").textContent=m.replay?"► Best replay":`${m.evaluating?"◇ Evaluating":"● "+(m.algorithm||"ppo").toUpperCase()} · update ${m.update}`;$("modelNote").textContent=m.algorithm==="dqn"?`Fixed FlyWire reservoir · Double/dueling DQN · ${m.replaySize??0} replay transitions · epsilon ${(m.epsilon??0).toFixed(3)}. Best model: mean evaluation task reward.`:m.combatRewards?"Fixed full FlyWire reservoir · player-weapon damage/destruction rewards + coverage/RND. Evaluation excludes exploration bonuses; completion remains the main objective.":m.exploration==='episodic-coverage+rnd'?"Fixed full FlyWire reservoir · bounded position coverage + geometry novelty during training. Damage/death earn no exploration bonus; evaluation uses task reward only.":m.rays?"Fixed full FlyWire reservoir · vision + 32-ray inputs. PPO learns the readout with capped geometry novelty during training; evaluation uses task reward only.":"Fixed full FlyWire reservoir. PPO learns the readout; evaluation and best-policy replay use frozen weights."}
     document.body.dataset.seq=String(seq)
   }
   let drag=null;
@@ -193,8 +194,13 @@ async function run(){
   function plot(){
     if(!progress)return;
     const c=$("trend").getContext("2d"),metric=$("metric").value,rows=progress.episodes;
-    const pts=rows.map(r=>[r.episode,r[metric]??r.reward]);
-    const ev=progress.evaluations.map(e=>[e.episode,metric==="survived_seconds"?e.rank[2]:e.mean_reward]);
+    const finitePoint=([i,v])=>Number.isFinite(i)&&Number.isFinite(v);
+    const pts=rows.map(r=>[r.episode,r[metric]??r.reward]).filter(finitePoint);
+    const ev=progress.evaluations.map(e=>{
+      const seconds=(e.trials||[]).map(t=>t.seconds).filter(Number.isFinite);
+      const survival=seconds.length?seconds.reduce((a,b)=>a+b,0)/seconds.length:undefined;
+      return [e.episode,metric==="survived_seconds"?survival:e.mean_reward]
+    }).filter(finitePoint);
     c.clearRect(0,0,510,208);if(!pts.length&&!ev.length)return;
     const vals=[...pts,...ev].map(p=>p[1]),lo=Math.min(0,...vals),hi=Math.max(lo+.1,...vals),last=Math.max(1,...[...pts,...ev].map(p=>p[0]));
     const X=i=>68+427*i/last,Y=v=>165-(v-lo)*139/(hi-lo);

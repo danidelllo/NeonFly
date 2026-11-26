@@ -4,6 +4,10 @@ For current launch/install/resume commands, read [the agent runbook](../AGENTS.m
 This document includes historical viewer descriptions; the current game controls
 are Pause/Step/Play under Game Status (see the final section). Freeze view is
 removed, and All inputs includes visual, resource, and range populations.
+The current [four-sector sensor](DENSE_SENSOR_RUN.md) displays 126 actual ray
+angles: front 55, top 8, behind 8, below 55. Range inputs now shows the actual
+2,658 mapped neurons (three copies per channel), and All inputs traces 14,084
+links. Earlier population/ray counts below describe previous encoders.
 
 ## Visual inputs and control wiring
 
