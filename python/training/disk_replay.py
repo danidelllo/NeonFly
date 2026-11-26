@@ -14,10 +14,14 @@ import torch
 
 
 class DiskReplay:
-    def __init__(self, capacity, width, seed, directory, alpha=.6, chunk_size=4096):
+    def __init__(self, capacity, width, seed, directory, alpha=.6, chunk_size=4096,
+                 uniform_fraction=0., weight_normalization='global'):
         if capacity <= 0 or width <= 0 or not 0 <= alpha <= 1:
             raise ValueError('invalid disk replay dimensions/alpha')
         self.capacity, self.width, self.alpha = capacity, width, alpha
+        if not 0 <= uniform_fraction <= 1 or weight_normalization not in ('global','batch'):
+            raise ValueError('invalid replay weighting configuration')
+        self.uniform_fraction, self.weight_normalization = uniform_fraction, weight_normalization
         self.directory = Path(directory).resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.chunk_size = chunk_size
@@ -74,7 +78,15 @@ class DiskReplay:
             values -= np.where(right, self.sums[left], 0.)
             nodes = left+right
         indices = nodes-self.leaves
-        weights = (self.sums[nodes]/self.minimum[1])**(-beta)
+        if self.uniform_fraction:
+            uniform = self.rng.random(batch) < self.uniform_fraction
+            indices[uniform] = self.rng.integers(self.size, size=int(uniform.sum()))
+        probabilities = (1-self.uniform_fraction)*self.sums[self.leaves+indices]/self.sums[1]+self.uniform_fraction/self.size
+        if self.weight_normalization == 'batch':
+            weights = (probabilities/probabilities.min())**(-beta)
+        else:
+            minimum = (1-self.uniform_fraction)*self.minimum[1]/self.sums[1]+self.uniform_fraction/self.size
+            weights = (probabilities/minimum)**(-beta)
         return indices, weights.astype(np.float32)
 
     def batch(self, indices):
@@ -129,6 +141,7 @@ class DiskReplay:
         return dict(storage='disk-v1', capacity=self.capacity, width=self.width,
                     directory=str(self.directory), total=self.total, size=self.size,
                     cursor=self.cursor, alpha=self.alpha, max_priority=self.max_priority,
+                    uniform_fraction=self.uniform_fraction, weight_normalization=self.weight_normalization,
                     chunks=active, priorities=torch.from_numpy(self.priorities[:self.size].copy()),
                     rng=self.rng.bit_generator.state)
 
@@ -146,6 +159,8 @@ class DiskReplay:
             return
         if (saved['capacity'],saved['width'],saved['alpha']) != (self.capacity,self.width,self.alpha):
             raise ValueError('disk replay checkpoint dimensions mismatch')
+        if (saved.get('uniform_fraction',0.),saved.get('weight_normalization','global')) != (self.uniform_fraction,self.weight_normalization):
+            raise ValueError('disk replay weighting configuration mismatch')
         if Path(saved['directory']).resolve() != self.directory:
             raise ValueError('disk replay directory mismatch; retain checkpoint sidecar files')
         self.close()

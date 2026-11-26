@@ -89,6 +89,17 @@ class DQNTests(unittest.TestCase):
                 t.learn();resumed.learn()
                 for k,v in t.head.state_dict().items():
                     torch.testing.assert_close(v,resumed.head.state_dict()[k])
+                t.cfg.update(episodes=0,epsilon_initial=1.,epsilon_final=1.,exploration_hold_steps=3)
+                t.episodes = 10000
+                self.assertFalse(t.finished())
+                t.begin_episode()
+                first = t.decision(torch.randn(12))[0]
+                self.assertEqual(t.explore_remaining,2)
+                self.assertEqual(t.decision(torch.randn(12))[0],first)
+                self.assertEqual(t.decision(torch.randn(12))[0],first)
+                self.assertEqual(t.explore_remaining,0)
+                t.begin_episode()
+                self.assertEqual(t.explore_remaining,0)
                 t.writer.close();resumed.writer.close()
                 if disk:
                     t.memory.close();resumed.memory.close()

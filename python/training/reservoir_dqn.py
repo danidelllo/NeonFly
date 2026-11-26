@@ -90,7 +90,7 @@ class Trainer:
         if warm_start:
             raise ValueError('DQN must start fresh or resume its own checkpoint')
         self.cfg = tomllib.loads(Path(config_path).read_text())
-        if self.cfg['algorithm'] != 'dqn' or self.cfg.get('rnd'):
+        if self.cfg['algorithm'] not in ('dqn','awr') or self.cfg.get('rnd'):
             raise ValueError('DQN replay stores task reward; RND must be disabled')
         self.run, self.ckpt = Path('logs/ppo')/run, Path('checkpoints')/run
         self.run.mkdir(parents=True, exist_ok=bool(resume))
@@ -104,8 +104,16 @@ class Trainer:
                    'unity-mod/src/RangeSensor.cs', 'unity-mod/src/Combat.cs', 'unity-mod/src/CombatLedger.cs')
         self.signature = dict(config=self.cfg, environment=asdict(env_config), graph=graph_digest(),
                               width=features, selection='mean-evaluation-task-reward-v1',
-                              representation='color-motion-rays-v2;resource64;outputs+delta+ema;leak0.6;substeps3',
+                              representation=self.cfg['encoder']+';resource64;outputs+delta+ema;leak0.6;substeps3',
                               sources={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in sources})
+        if self.cfg['encoder'] == 'rays-resources-v1':
+            p = 'python/vision/radar_readout.py'
+            self.signature['sources'][p] = hashlib.sha256(Path(p).read_bytes()).hexdigest()
+            self.signature['representation'] += ';sensor-recipients1024'
+        if self.cfg['algorithm'] == 'awr':
+            p = 'python/training/reservoir_awr.py'
+            self.signature['sources'][p] = hashlib.sha256(Path(p).read_bytes()).hexdigest()
+            self.signature['return_targets'] = 'complete-episode-monte-carlo-v1'
         if self.cfg.get('replay_storage') == 'disk':
             p = 'python/training/disk_replay.py'
             self.signature['sources'][p] = hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -116,7 +124,9 @@ class Trainer:
         if self.cfg.get('replay_storage') == 'disk':
             from python.training.disk_replay import DiskReplay
             self.memory = DiskReplay(self.cfg['replay_capacity'], features, self.cfg['seed']+1,
-                                     self.ckpt/'replay-data', self.cfg['priority_alpha'])
+                                     self.ckpt/'replay-data', self.cfg['priority_alpha'],
+                                     uniform_fraction=self.cfg.get('replay_uniform_fraction',0.),
+                                     weight_normalization=self.cfg.get('replay_weight_normalization','global'))
         else:
             self.memory = Replay(self.cfg['replay_capacity'], features, self.cfg['seed']+1)
         self.rng = np.random.default_rng(self.cfg['seed']+2)
@@ -124,6 +134,7 @@ class Trainer:
         self.last_eval = -1
         self.best = None
         self.novelty = None
+        self.explore_remaining = self.explore_action = 0
         if resume:
             path = self.ckpt/'latest.pt' if resume is True else Path(resume)
             saved = torch.load(path, map_location='cpu', weights_only=True)
@@ -136,6 +147,7 @@ class Trainer:
             self.steps, self.episodes, self.updates = saved['progress']
             self.last_eval, self.best = saved['last_eval'], saved['best_rank']
             self.rng.bit_generator.state = saved['action_rng']
+            self.explore_remaining, self.explore_action = saved.get('exploration_hold',(0,0))
             torch.set_rng_state(saved['rng'])
             if device == 'cuda':
                 torch.cuda.set_rng_state(saved['cuda_rng'])
@@ -147,12 +159,24 @@ class Trainer:
     @property
     def epsilon(self):
         fraction = min(1., self.steps/self.cfg['epsilon_decay_steps'])
-        return 1. + fraction*(self.cfg['epsilon_final']-1.)
+        initial = self.cfg.get('epsilon_initial',1.)
+        return initial + fraction*(self.cfg['epsilon_final']-initial)
+
+    def begin_episode(self):
+        self.explore_remaining = 0
 
     @torch.no_grad()
     def decision(self, features):
         x = F.layer_norm(features, features.shape)
-        action = int(self.rng.integers(36)) if self.rng.random() < self.epsilon else int(self.head(x).argmax())
+        if self.explore_remaining:
+            action = self.explore_action
+            self.explore_remaining -= 1
+        elif self.rng.random() < self.epsilon:
+            action = int(self.rng.integers(36))
+            self.explore_action = action
+            self.explore_remaining = self.cfg.get('exploration_hold_steps',1)-1
+        else:
+            action = int(self.head(x).argmax())
         return action, (x.cpu().numpy().copy(), action)
 
     def learn(self):
@@ -162,7 +186,7 @@ class Trainer:
         tensor = lambda a:torch.as_tensor(a, device=self.device)
         x = tensor(batch['states'].astype(np.float32))
         nx = tensor(batch['next_states'].astype(np.float32))
-        expected = double_targets(self.head, self.target, nx, tensor(batch['rewards']), tensor(batch['discounts']))
+        expected = double_targets(self.head, self.target, nx, tensor(batch['rewards'])*self.cfg.get('reward_scale',1.), tensor(batch['discounts']))
         actual = self.head(x).gather(1, tensor(batch['actions'])[:, None]).squeeze(1)
         errors = expected-actual
         loss = (tensor(weights)*F.smooth_l1_loss(actual, expected, reduction='none')).mean()
@@ -176,12 +200,18 @@ class Trainer:
         self.updates += 1
         if self.updates % self.cfg['target_sync_updates'] == 0:
             self.target.load_state_dict(self.head.state_dict())
-        return float(loss.detach()), float(errors.detach().abs().mean())
+        return (float(loss.detach()), float(errors.detach().abs().mean()),
+                float(weights.mean()), float(weights.max()),
+                float(actual.detach().abs().mean()), float(expected.abs().mean()))
 
-    def end_episode(self, trajectory, tail, reason, elapsed_ticks, seconds, details=None):
+    def add_trajectory(self, trajectory, tail, reason):
         terminal = reason != 'time_limit'
         for transition in nstep_transitions(trajectory, tail, terminal, self.cfg['gamma'], self.cfg['n_step']):
             self.memory.add(*transition)
+
+    def end_episode(self, trajectory, tail, reason, elapsed_ticks, seconds, details=None):
+        self.explore_remaining = 0
+        self.add_trajectory(trajectory, tail, reason)
         self.episodes += 1
         self.steps += len(trajectory)
         metrics = []
@@ -194,12 +224,16 @@ class Trainer:
         row = dict(update=self.updates, episodes=self.episodes, steps=self.steps, mean_return=reward,
                    epsilon=self.epsilon, replay_size=self.memory.size,
                    mean_loss=float(np.mean([x[0] for x in metrics])) if metrics else 0.,
-                   mean_td_error=float(np.mean([x[1] for x in metrics])) if metrics else 0.)
+                   mean_td_error=float(np.mean([x[1] for x in metrics])) if metrics else 0.,
+                   mean_replay_weight=float(np.mean([x[2] for x in metrics])) if metrics else 0.,
+                   max_replay_weight=float(np.max([x[3] for x in metrics])) if metrics else 0.,
+                   mean_abs_q=float(np.mean([x[4] for x in metrics])) if metrics else 0.,
+                   mean_abs_target=float(np.mean([x[5] for x in metrics])) if metrics else 0.)
         self.log('updates', row)
         for k,v in row.items():
             self.writer.add_scalar('train/'+k, v, self.steps)
         self.writer.flush()
-        print(f'DQN episode {self.episodes}: {reason}, {seconds:.2f}s, reward={reward:.4f}, epsilon={self.epsilon:.3f}, replay={self.memory.size}, updates={self.updates}', flush=True)
+        print(f'{self.cfg["algorithm"].upper()} episode {self.episodes}: {reason}, {seconds:.2f}s, reward={reward:.4f}, epsilon={self.epsilon:.3f}, replay={self.memory.size}, updates={self.updates}', flush=True)
         if self.episodes % 4 == 0 or self.finished():
             self.save_policy('latest', {})
         if self.episodes % 20 == 0:
@@ -225,16 +259,18 @@ class Trainer:
         # Resume must retain evaluation scheduling and selection, even if not best.
         self.save_policy('latest', {})
         self.log('evaluations', record)
-        print(f'DQN evaluation episode {self.episodes}: mean task reward={mean:.4f}, selected={selected}', flush=True)
+        print(f'{self.cfg["algorithm"].upper()} evaluation episode {self.episodes}: mean task reward={mean:.4f}, selected={selected}', flush=True)
 
     def finished(self):
-        return self.episodes >= self.cfg['episodes'] or (self.run/'STOP').exists()
+        limit = self.cfg['episodes']
+        return bool(limit and self.episodes >= limit) or (self.run/'STOP').exists()
 
     def training_state(self):
         return dict(signature=self.signature, head=self.head.state_dict(), target=self.target.state_dict(),
                     optimizer=self.opt.state_dict(), replay=self.memory.state_dict(),
                     progress=(self.steps,self.episodes,self.updates), best_rank=self.best, last_eval=self.last_eval,
                     action_rng=self.rng.bit_generator.state, rng=torch.get_rng_state(),
+                    exploration_hold=(self.explore_remaining,self.explore_action),
                     cuda_rng=torch.cuda.get_rng_state() if self.device=='cuda' else None)
 
     def save_policy(self, name, selection):

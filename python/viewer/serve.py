@@ -9,6 +9,7 @@ import threading
 import time
 import sys
 import secrets
+import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -50,6 +51,12 @@ def main():
     if args.replay_best and args.train_run or args.warm_start and (args.resume or not args.train_run):
         parser.error("choose one of fresh training, warm start, resume, or replay")
     active_run = args.train_run or args.replay_best
+    encoder = tomllib.loads(Path(args.config).read_text()).get('encoder') if args.train_run else None
+    if args.replay_best:
+        import torch
+        encoder = torch.load(Path('checkpoints')/args.replay_best/'best.pt',map_location='cpu',weights_only=True)['signature']['config'].get('encoder')
+    from python.vision.range_sensor import RADAR_ENCODER
+    from python.vision.radar_readout import readout_neurons
     if active_run and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}", active_run):
         parser.error("invalid run name")
     load = lambda n: np.load(DATA / (n + ".npy"), mmap_mode="r")
@@ -65,10 +72,13 @@ def main():
     sizes = np.maximum(1, np.bincount(bins, minlength=1024))
     centroids = np.column_stack([np.bincount(bins, weights=axis, minlength=1024)/sizes for axis in xyz.T])
     for route, array in (("/xyz", xyz), ("/centroids", centroids.astype("<f4")),
-                         ("/inputs", load("sensory")), ("/outputs", load("output"))):
+                         ("/inputs", load("sensory")), ("/outputs", readout_neurons(encoder).astype('<i4'))):
         static[route] = ("application/octet-stream", array.tobytes())
     from python.vision.connectome import sensory_mapping
     visual, slots, resource_neurons = sensory_mapping(load("sensory"))
+    if encoder == RADAR_ENCODER:
+        visual, slots = visual[:0],slots[:0]
+        static['/inputs'] = ('application/octet-stream',resource_neurons.astype('<i4').tobytes())
     from python.vision.range_sensor import sensor_mapping
     range_neurons, range_slots = sensor_mapping()
     static["/encoding"] = ("application/json", json.dumps(dict(side=42,
@@ -121,7 +131,13 @@ def main():
                 self.send_error(403)
                 return
             u = urlsplit(self.path)
-            if u.path in static:
+            if args.observe and u.path in ('/encoding','/inputs','/outputs','/range-neurons'):
+                try:
+                    with urlopen('http://127.0.0.1:47652'+u.path,timeout=5) as upstream:
+                        self.send(upstream.status,upstream.headers.get('Content-Type'),upstream.read())
+                except (URLError,TimeoutError):
+                    self.send(503,'text/plain',b'Training mapping unavailable')
+            elif u.path in static:
                 self.send(200, *static[u.path])
             elif u.path == "/actor":
                 key = policy_frame

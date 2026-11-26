@@ -8,6 +8,7 @@ export function inputMaps(mapping,project,repaint){
   const $=id=>document.getElementById(id),panel=$('inputMaps'),overlay=$('inputLines'),ctx=overlay.getContext('2d'),hub=$('inputHub');
   let values=null,frame=null,activity=null,bank=-1,pixel=null,selected=-1,source='maps',resource=-1;
   const radar=$('rangePanel');
+  const visionEnabled=mapping.visual.length>0;
   const cards=names.map((name,k)=>{
     const b=document.createElement('button');b.className='map-tile';b.type='button';b.setAttribute('aria-pressed','false');
     b.title=explanations[k]+'. Click to trace the whole map. Shift-click a pixel to inspect its neuron mapping.';
@@ -25,6 +26,13 @@ export function inputMaps(mapping,project,repaint){
     };
     return {button:b,canvas,context:canvas.getContext('2d')}
   });
+  if(!visionEnabled){
+    panel.style.display='none';
+    document.querySelector('.sensory-heading small').textContent='RADAR / SHIP / RESOURCES';
+    hub.querySelector('b').textContent='126 rays';
+    hub.querySelector('span').textContent='+ ship / resources';
+    $('inputKind').textContent='Resource inputs';
+  }
   const resources=['Health','Bullets','Rockets'].map((name,k)=>{
     const element=document.createElement('button');element.type='button';element.className='resource-input';
     element.setAttribute('aria-pressed','false');element.title=`Trace ${name.toLowerCase()} to its 64 assigned input neurons`;
@@ -69,7 +77,7 @@ export function inputMaps(mapping,project,repaint){
       $('mapStatus').textContent=`${names[bank]} [${pixel%42}, ${Math.floor((pixel%1764)/42)}] → ${count} input neuron${count===1?'':'s'} · drive ${values[pixel].toFixed(4)}`
     }else if(bank!==-1){const count=candidates.filter(d=>Math.floor(d.slot/1764)===bank).length;
       $('mapStatus').textContent=`${names[bank]} → ${count.toLocaleString()} input neurons · Shift-click a pixel for its exact connections`;
-    }else $('mapStatus').textContent=`All inputs · six visual maps + health / bullets / rockets${frame.rays?.valid?' + range sensor':''} · sample ${frame.seq.toLocaleString()}`;
+    }else $('mapStatus').textContent=`All inputs · ${visionEnabled?'six visual maps + ':''}health / bullets / rockets${frame.rays?.valid?' + range sensor':''} · sample ${frame.seq.toLocaleString()}`;
     $('allMaps').setAttribute('aria-pressed',String(source==='maps'&&bank===-1));
     hub.hidden=false
   }
@@ -95,7 +103,7 @@ export function inputMaps(mapping,project,repaint){
       ctx.strokeStyle=value<0?'#b197ff':'#71eac5';ctx.globalAlpha=alpha;ctx.lineWidth=.8;
       ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(X,Y);ctx.stroke()
     }
-    if(source==='maps')cards.forEach((card,k)=>{if(bank!==-1&&bank!==k)return;const r=card.canvas.getBoundingClientRect();
+    if(source==='maps'&&visionEnabled)cards.forEach((card,k)=>{if(bank!==-1&&bank!==k)return;const r=card.canvas.getBoundingClientRect();
       line(r.left+r.width/2-box.left,r.top-box.top,hx,hb.bottom-box.top,1,.23)});
     if(source!=='range'&&bank===-1)resources.forEach((r,k)=>{if(source==='resource'&&resource!==k)return;const rbox=r.element.getBoundingClientRect();line(rbox.left-box.left,rbox.top+rbox.height/2-box.top,hx,hb.bottom-box.top,frame.resourceDrive[k],.45)});
     if(includeRange){const r=radar.getBoundingClientRect();line(r.left+r.width/2-box.left,r.top-box.top,hx,hb.bottom-box.top,1,.45)}

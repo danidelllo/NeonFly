@@ -5,7 +5,8 @@ import numpy as np
 
 LEGACY_RAY_ENCODER = "color-motion-rays-v1"
 RAY_ENCODER = "color-motion-rays-v2"
-RAY_ENCODERS = (LEGACY_RAY_ENCODER, RAY_ENCODER)
+RADAR_ENCODER = 'rays-resources-v1'
+RAY_ENCODERS = (LEGACY_RAY_ENCODER, RAY_ENCODER, RADAR_ENCODER)
 RAY_COUNT = 126
 SENSOR_WIDTH = RAY_COUNT*7+4
 RAY_LAYOUT = 'quadrants-126-v2'
@@ -85,7 +86,7 @@ def sensor_mapping(encoder=RAY_ENCODER):
     neurons = np.random.default_rng(784).permutation(neurons).astype(np.int64)
     if encoder == LEGACY_RAY_ENCODER:
         slots = np.arange(len(neurons), dtype=np.int64) % (32*7+4)
-    elif encoder == RAY_ENCODER:
+    elif encoder in (RAY_ENCODER, RADAR_ENCODER):
         neurons = neurons[:SENSOR_WIDTH*3]
         slots = np.tile(np.arange(SENSOR_WIDTH, dtype=np.int64), 3)
     else:

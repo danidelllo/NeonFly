@@ -35,12 +35,62 @@ PowerShell from the checkout root. Current working setup was verified on
 | Unity bridge | `127.0.0.1:47651` |
 | Sole model/controller server | `http://127.0.0.1:47652/` |
 | Observer / preferred viewer | `http://127.0.0.1:47653/` |
-| Most recent active run | `flywire-dqn-012` — query live state to confirm |
-| Current run configuration | `configs/disk_dqn.toml`, `configs/heavy_combat_ship.toml` |
+| Most recent active run | `flywire-awr-015` — query live state to confirm |
+| Current run configuration | `configs/radar_awr.toml`, `configs/heavy_combat_ship.toml` |
 | Run state | `checkpoints/<run>/`, `logs/ppo/<run>/` |
-| Launch logs | `logs/launch/flywire-dqn-012-resume-{out,err}.txt` |
+| Launch logs | `logs/launch/flywire-awr-015-{out,err}.txt` |
 
-Current run 012 continues 011 with **1,000,000 disk-backed replay transitions**
+Current run 015 uses **advantage-weighted measured-return replay**, replacing
+unstable DQN. See `docs/AWR_RUN.md`. 014 stopped at episode 760: Q magnitude grew
+to ~153 with TD error ~59 despite scaled death reward -1; no recorded completion.
+All 21,821 own-agent transitions recovered into full measured discounted returns
+using old 5-step blocks plus episode log boundaries. Fresh actor/value/optimizer,
+512 CUDA replay pretraining updates (value magnitude ~.97, measured returns ~.97).
+NO critic/target prediction enters a return target. Uniform disk replay capacity
+one million, unchanged radar/resources-only fixed brain and 7,317 features.
+Same raw task rewards (+5 destruction/-100 death), best by mean evaluation task
+reward. Train stochastic categorical actor with advantage-weighted regression,
+value Huber loss, entropy .01; epsilon .1 -> .05 generic 3-action bursts. No human
+demos, chosen sections or gate scripts. episodes=0, unlimited until STOP/failure;
+permanent snapshots/evaluations every 20. Use radar_awr.toml / heavy_combat_ship.toml.
+Keep replay-data with checkpoints. Legacy target checkpoint field is inert,
+not used by AWR learning. New update logs report measured-return error and
+value magnitude rather than Q/TD error. 64 tests and 512 full-width CUDA updates
+passed. Initial fit stability is not evidence of gate success. Old sources/models
+remain; strict resume signatures unchanged. Observer needs refresh for AWR label.
+
+Historical run 014 is **radar/resources only**, a fresh representation after 013
+stopped at episode 592 without resolving the user's reported gate problem. See
+`docs/RADAR_RUN.md`. Encoder rays-resources-v1 disables all visual drive exactly;
+images remain display/transport only. Direct inputs: 2,658 radar/ship cells plus
+192 resource cells. Fixed connectome/synapses unchanged. Readout observes 2,439
+neurons (1,415 original + 1,024 anatomically selected sensor recipients), giving
+7,317 current/delta/EMA features. No raw-sensor bypass and no trainable neurons.
+Fresh head/optimizer/replay; old feature replay is incompatible. Same repaired
+DQN and +5 destruction / -100 death. Epsilon 1 -> .1 over 50k decisions, generic
+three-action exploration holds. No episode limit; snapshots/evals every 20.
+Disk capacity one million, ~29.284 GB at active capacity; keep replay-data with
+checkpoints. Viewer must refresh after observer restart: visual cards hidden,
+resources/radar clickable, /outputs now returns 2,439 neurons. Observer proxies
+active mappings from main controller. 60 tests plus 7,317-feature CUDA replay
+preflight passed. Historical runs require original configs/source snapshots.
+
+Historical run 013 repairs replay learning after 012 exhausted 512 episodes with
+no completion. See `docs/REPAIRED_DQN_RUN.md`. **No episode limit**: episodes=0;
+run until explicitly stopped (or failure/shutdown). Keep 20-episode permanent
+checkpoints and evaluations. Use configs/repaired_dqn.toml and heavy_combat_ship.toml.
+Fixed brain, inputs and mapping stay intact. 012's best actor is rescaled by .01
+(preserves action ranking); all 30,914 transitions retained, priorities reset,
+optimizer fresh and target synchronized. New counters start zero. TD rewards
+scaled .01, raw task reward/ranking unchanged. PER weights normalize per batch,
+20% uniform replay, one update per decision, generic 3-decision exploratory
+bursts. Epsilon .30 -> .10 over 100k new decisions. Actual logs showed old global
+importance weights near 1e-4–1e-3, suppressing updates. Radar perturbations reached
+motor outputs, so visuals were not removed blindly. This is a learning repair,
+NOT evidence of gameplay success. Keep replay-data with models. Old source and
+checkpoints remain; strict resume checks are unchanged. 57 tests passed.
+
+Historical run 012 continues 011 with **1,000,000 disk-backed replay transitions**
 (user superseded earlier 20-million request). See `docs/DISK_REPLAY_RUN.md`.
 All 593 source transitions, networks/optimizer/RNG and counters were migrated
 at episode 20. Capacity-only continuation, not a fresh experiment. Packed disk
@@ -235,8 +285,8 @@ and status is Level_1:
 
 ```powershell
 # A STOP marker is an intentional stop request. Remove it only when resuming.
-Remove-Item -LiteralPath 'logs\ppo\flywire-dqn-012\STOP' -ErrorAction SilentlyContinue
-.\.venv\Scripts\python.exe -u -m python.viewer.serve --train-run flywire-dqn-012 --config configs/disk_dqn.toml --env-config configs/heavy_combat_ship.toml --resume --device cuda
+Remove-Item -LiteralPath 'logs\ppo\flywire-awr-015\STOP' -ErrorAction SilentlyContinue
+.\.venv\Scripts\python.exe -u -m python.viewer.serve --train-run flywire-awr-015 --config configs/radar_awr.toml --env-config configs/heavy_combat_ship.toml --resume --device cuda
 ```
 
 This foreground command stays running. Use another shell to open the viewer:
@@ -298,7 +348,7 @@ handoff using default configs; do not use it for the current sensor run.
 Request a graceful stop with:
 
 ```powershell
-New-Item -ItemType File -Force 'logs\ppo\flywire-dqn-012\STOP' | Out-Null
+New-Item -ItemType File -Force 'logs\ppo\flywire-awr-015\STOP' | Out-Null
 ```
 
 STOP is checked between episodes. If paused mid-episode, Play is needed to finish
@@ -313,7 +363,7 @@ not the exact Unity scene. A new episode is started. Keep the current checkpoint
 before rolling back. Frozen three-episode best replay, with the trainer stopped:
 
 ```powershell
-.\.venv\Scripts\python.exe -m python.viewer.serve --replay-best flywire-dqn-012 --device cuda
+.\.venv\Scripts\python.exe -m python.viewer.serve --replay-best flywire-awr-015 --device cuda
 ```
 
 Source signatures are byte-sensitive. CRLF/LF conversion on another checkout can

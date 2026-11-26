@@ -10,6 +10,24 @@ from python.training.reservoir_dqn import Replay
 
 
 class DiskReplayTests(unittest.TestCase):
+    def test_mixture_and_batch_weights_do_not_vanish_due_to_unseen_minimum(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            replay = DiskReplay(100,2,3,tmp,uniform_fraction=.2,weight_normalization='batch')
+            for i in range(100):
+                replay.add(np.zeros(2),0,0,np.zeros(2),0)
+            replay.reprioritize(np.arange(100),np.r_[1e-8,np.full(99,100.)])
+            indices,weights = replay.sample(4096,.6,1.)
+            p = .8*replay.sums[replay.leaves+indices]/replay.sums[1]+.2/100
+            np.testing.assert_allclose(weights,p.min()/p,rtol=1e-6)
+            self.assertEqual(float(weights.max()),1.)
+            self.assertGreater(float(np.median(weights)),.1)
+            self.assertGreater(int(np.sum(indices==0)),0)
+            saved = replay.state_dict();replay.close()
+            restored = DiskReplay(100,2,0,tmp,uniform_fraction=.2,weight_normalization='batch')
+            restored.load_state_dict(saved)
+            self.assertEqual(restored.weight_normalization,'batch')
+            restored.close()
+
     def test_immutable_checkpoint_restore_after_wrap_and_branch(self):
         with tempfile.TemporaryDirectory() as tmp:
             replay = DiskReplay(4,2,3,tmp,chunk_size=2)

@@ -1,3 +1,9 @@
+Current run: **flywire-awr-015**, advantage-weighted replay using measured episode returns (no Q bootstrapping). See [AWR run notes](docs/AWR_RUN.md).
+
+Current run: **flywire-radar-014**, radar/resources only with an expanded fixed-brain readout. See [radar run notes](docs/RADAR_RUN.md).
+
+Current run: **flywire-dqn-013**, repaired replay weighting and no episode limit. See [repair notes](docs/REPAIRED_DQN_RUN.md).
+
 Current run: **flywire-dqn-012**, continuing with **1 million disk-backed replay transitions**. See [disk replay notes](docs/DISK_REPLAY_RUN.md).
 
 Current reward experiment: **flywire-dqn-011** — destruction **+5**, death **-100**. See [reward run notes](docs/HEAVY_REWARD_RUN.md).

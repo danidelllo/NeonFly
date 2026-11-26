@@ -15,7 +15,8 @@ from python.environment.ship import ShipConfig, ShipEnv
 from python.viewer.prepare import DATA
 from python.viewer.policy import demo_weights
 from python.vision.connectome import ENCODER, visual_channels, sensory_mapping, resources, preview
-from python.vision.range_sensor import RAY_ENCODER, RAY_ENCODERS, LEGACY_RAY_ENCODER, SENSOR_WIDTH, sensor_mapping, sensor_vector
+from python.vision.range_sensor import RAY_ENCODER, RAY_ENCODERS, LEGACY_RAY_ENCODER, RADAR_ENCODER, SENSOR_WIDTH, sensor_mapping, sensor_vector
+from python.vision.radar_readout import readout_neurons
 
 
 class Reservoir:
@@ -25,6 +26,7 @@ class Reservoir:
         if encoder not in (None, ENCODER, *RAY_ENCODERS):
             raise ValueError("unknown fixed encoder")
         self.encoder = encoder
+        self.vision_enabled = encoder != RADAR_ENCODER
         def tensor(array):
             return torch.from_numpy(array).to(device)
         pointers, indices = load("in_indptr"), load("in_indices")
@@ -45,7 +47,7 @@ class Reservoir:
         pixels = np.rint((xy-xy.min(0))/np.ptp(xy, axis=0)*83).astype(np.int64)
         self.visual = tensor(visual.astype(np.int64))
         self.pixels = tensor(84*pixels[:, 1]+pixels[:, 0])
-        self.outputs = tensor(load("output").astype(np.int64))
+        self.outputs = tensor(readout_neurons(encoder))
         self.readout = tensor(demo_weights(len(self.outputs)))
         self.feature_width = len(self.outputs) * (3 if encoder else 1)
         if encoder:
@@ -53,6 +55,9 @@ class Reservoir:
             self.visual = tensor(visual)
             self.pixels = tensor(slots)
             self.resource_neurons = tensor(resource_neurons)
+            if not self.vision_enabled:
+                self.visual = self.visual[:0]
+                self.pixels = self.pixels[:0]
         if encoder in RAY_ENCODERS:
             neurons, slots = sensor_mapping(encoder)
             self.range_neurons = tensor(neurons)
@@ -68,8 +73,11 @@ class Reservoir:
     @torch.no_grad()
     def advance(self, observation, game=None):
         if self.encoder:
-            image = torch.from_numpy(observation.copy()).to(self.device)
-            self.visual_maps = visual_channels(image)
+            if self.vision_enabled:
+                image = torch.from_numpy(observation.copy()).to(self.device)
+                self.visual_maps = visual_channels(image)
+            else:
+                self.visual_maps = torch.zeros((6,42,42),device=self.device)
             drive = self.visual_maps.flatten()[self.pixels]
             resource_drive = torch.tensor(resources(game), device=self.device).repeat_interleave(64)
             if self.encoder in RAY_ENCODERS:
@@ -137,12 +145,14 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
         replay = None
         eval_rows = []
         if train_run:
-            if cfg.get('algorithm') == 'dqn':
+            if cfg.get('algorithm') == 'awr':
+                from python.training.reservoir_awr import Trainer
+            elif cfg.get('algorithm') == 'dqn':
                 from python.training.reservoir_dqn import Trainer
             else:
                 from python.training.reservoir_ppo import Trainer
             trainer = Trainer(train_run, model.feature_width, device, env.config, resume, warm_start, config_path)
-            if cfg.get('algorithm') != 'dqn' and len(trainer.returns) == trainer.cfg["episodes_per_update"]:
+            if cfg.get('algorithm') not in ('dqn','awr') and len(trainer.returns) == trainer.cfg["episodes_per_update"]:
                 trainer.update()
         if replay_run:
             from python.training.reservoir_ppo import ReplayPolicy
@@ -169,6 +179,8 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
             obs, info = env.reset()
             initialized = True
             model.clear()
+            if trainer and hasattr(trainer,'begin_episode'):
+                trainer.begin_episode()
             if trainer and trainer.novelty:
                 trainer.novelty.begin_episode(info['game'])
             if not evaluating:
@@ -200,7 +212,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                 if trainer:
                     meta.update(training=True, evaluating=bool(evaluating), update=trainer.updates, run=train_run)
                     meta['algorithm'] = cfg.get('algorithm', 'ppo')
-                    if cfg.get('algorithm') == 'dqn':
+                    if cfg.get('algorithm') in ('dqn','awr'):
                         meta.update(epsilon=trainer.epsilon, replaySize=trainer.memory.size)
                     if trainer.novelty and trainer.novelty.coverage_enabled:
                         meta['exploration'] = 'episodic-coverage+rnd'
@@ -212,6 +224,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                     with torch.no_grad():
                         scores = (trainer or replay).head(torch.nn.functional.layer_norm(features, features.shape))[:36]
                     meta.update(readout="nonlinear", logits=scores.cpu().tolist(),
+                                visionEnabled=model.vision_enabled, readoutNeurons=len(model.outputs),
                                 health=game.get("health"), rockets=game.get("rockets"), encoder=model.encoder)
                     # Display-only telemetry, from the same encoder invocation as this action.
                     meta["inputMaps"] = dict(side=42, count=6, encoding="float32-le",
@@ -252,8 +265,10 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                         terminal_meta = {**meta, 'seq': seq, 'frame': game['frame'],
                                          'timestamp': time.time(), 'terminal': True}
                         if model.encoder:
+                            terminal_maps = (visual_channels(torch.from_numpy(obs.copy()).to(device))
+                                             if model.vision_enabled else model.visual_maps)
                             terminal_meta['inputMaps'] = dict(side=42, count=6, encoding='float32-le',
-                                data=base64.b64encode(visual_channels(torch.from_numpy(obs.copy()).to(device))
+                                data=base64.b64encode(terminal_maps
                                     .cpu().numpy().astype('<f4', copy=False).tobytes()).decode('ascii'))
                             terminal_meta['resourceDrive'] = terminal_resources(game, meta['resourceDrive'])
                             if model.encoder in RAY_ENCODERS:
@@ -276,7 +291,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                             messages.put(("complete", "Three frozen-policy replay episodes completed."))
                             return
                     elif trainer:
-                        if cfg.get('algorithm') == 'dqn':
+                        if cfg.get('algorithm') in ('dqn','awr'):
                             bootstrap = (torch.nn.functional.layer_norm(
                                 model.advance(obs, info['game']), features.shape).cpu().numpy()
                                 if cut and not done else np.zeros(model.feature_width, np.float32))
@@ -290,7 +305,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                                                 combat_kills=info.get('combat_kills', 0),
                                                 exploration=dict(trainer.novelty.stats) if trainer.novelty else {},
                                                 damage_fraction=info.get("damage_fraction", 0.), actions=actions.tolist()))
-                        if cfg.get('algorithm') != 'dqn' and len(trainer.returns) == trainer.cfg["episodes_per_update"]:
+                        if cfg.get('algorithm') not in ('dqn','awr') and len(trainer.returns) == trainer.cfg["episodes_per_update"]:
                             trainer.update()
                     break
     except Exception:

@@ -1,0 +1,29 @@
+algorithm = "dqn"
+seed = 783
+encoder = "rays-resources-v1"
+hidden = 256
+# Zero means no episode limit. Stop explicitly with the run's STOP marker.
+episodes = 0
+gamma = 0.999
+n_step = 5
+learning_rate = 0.0001
+batch_size = 128
+replay_capacity = 1000000
+replay_storage = "disk"
+replay_uniform_fraction = 0.2
+replay_weight_normalization = "batch"
+# Scale all task rewards equally for TD learning; raw rewards/ranking unchanged.
+reward_scale = 0.01
+learning_starts = 1024
+train_every = 1
+target_sync_updates = 250
+max_grad_norm = 10.0
+priority_alpha = 0.6
+priority_beta = 0.4
+epsilon_initial = 1.0
+epsilon_final = 0.1
+epsilon_decay_steps = 50000
+exploration_hold_steps = 3
+eval_every_episodes = 20
+eval_episodes = 5
+rnd = false
