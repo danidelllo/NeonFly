@@ -1,3 +1,5 @@
+Current experiment: **flywire-plastic-016** on **codex/trainable-fly-brain**. Intrinsic fly-neuron learning with a single linear readout; fixed anatomical wiring/signs. See [trainable brain notes](docs/PLASTIC_BRAIN_RUN.md).
+
 Current run: **flywire-awr-015**, advantage-weighted replay using measured episode returns (no Q bootstrapping). See [AWR run notes](docs/AWR_RUN.md).
 
 Current run: **flywire-radar-014**, radar/resources only with an expanded fixed-brain readout. See [radar run notes](docs/RADAR_RUN.md).

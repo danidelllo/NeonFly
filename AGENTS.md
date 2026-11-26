@@ -2,9 +2,18 @@
 
 Read this file before operating the game or trainer. Commands below use
 PowerShell from the checkout root. Current working setup was verified on
-2026-11-25; inspect live state rather than assuming a process/run still exists.
+2026-11-27; inspect live state rather than assuming a process/run still exists.
 
 ## Objective and user constraints
+
+**Permanent user constraint (2026-11-27):** The fly circuit itself must control
+the game. Never add planners, safety controllers, external world models or
+teacher policies. Keep preprocessing simple. User explicitly approved training
+one gain, bias and time constant per neuron while preserving anatomical wiring
+and connection signs, with a SINGLE LINEAR action readout. This supersedes the
+older frozen-reservoir/nonlinear-readout objective below. No human demos or
+selected-section training. New work belongs on codex/trainable-fly-brain; main
+a1a4f5d preserves all earlier fixed-brain work and was pushed before changes.
 
 - Train a policy to complete the user's Steam game **NEONSKY**, using the real
   FlyWire connectome as a **fixed reservoir**, with a learned nonlinear readout.
@@ -25,7 +34,7 @@ PowerShell from the checkout root. Current working setup was verified on
 | Item | Value |
 | --- | --- |
 | Existing checkout | `C:\Users\danik\Documents\GIT\NeonFly` |
-| Repository | `https://github.com/danidelllo/NeonFly.git`, branch `main` |
+| Repository | `https://github.com/danidelllo/NeonFly.git`, branch `codex/trainable-fly-brain` |
 | Game root | `C:\Program Files (x86)\Steam\steamapps\common\NEONSKY` |
 | Steam app ID | `4546400` |
 | Engine / loader | Unity 2022.3.62f3, Mono x64; BepInEx **5.4.23.6** |
@@ -35,12 +44,31 @@ PowerShell from the checkout root. Current working setup was verified on
 | Unity bridge | `127.0.0.1:47651` |
 | Sole model/controller server | `http://127.0.0.1:47652/` |
 | Observer / preferred viewer | `http://127.0.0.1:47653/` |
-| Most recent active run | `flywire-awr-015` — query live state to confirm |
-| Current run configuration | `configs/radar_awr.toml`, `configs/heavy_combat_ship.toml` |
+| Most recent active run | `flywire-plastic-016` — query live state to confirm |
+| Current run configuration | `configs/plastic_brain.toml`, `configs/heavy_combat_ship.toml` |
 | Run state | `checkpoints/<run>/`, `logs/ppo/<run>/` |
-| Launch logs | `logs/launch/flywire-awr-015-{out,err}.txt` |
+| Launch logs | `logs/launch/flywire-plastic-016-{out,err}.txt` |
 
-Current run 015 uses **advantage-weighted measured-return replay**, replacing
+Current run 016 trains **intrinsic parameters in the fly circuit itself** with
+ONE LINEAR action/value readout. See `docs/PLASTIC_BRAIN_RUN.md`. 139,255 cells,
+417,765 intrinsic gain/bias/response-time parameters; anatomical weights/signs
+fixed. Readout 1,415 motor cells -> 37 linear units (36 actions + training value),
+52,392 parameters; no hidden head, no recipient expansion, no delta/EMA features.
+Radar/resources preprocessing unchanged, no frames as input. Sequence replay
+stores 889 raw sensor values/action, not stale frozen activations. Replay complete
+episodes from zero with CURRENT brain parameters, detach gradients every 16
+choices while preserving forward state. Train on the new episode plus one old
+whole episode; measured-return targets, no bootstrapping. Heartbeat during replay
+keeps Unity held. Full brain/head/optimizer/RNG/raw-replay checkpoint latest each
+episode, permanent every 20; eval five greedy full-level episodes every 20.
+No episode limit. Same +5 destruction/-100 death task rewards. Old 015 stopped
+cleanly at 648 episodes / 5,880 updates. No old model/replay transfer. Full CUDA
+preflight verified actual return-loss gradients and updates in all three intrinsic
+groups with W bit-identical; 67 tests passed. First gameplay updates verified nonzero gradients and actual gain/bias/alpha
+changes in saved checkpoints. No gameplay success claimed. Main a1a4f5d was pushed BEFORE branch work; do not merge into main without
+user instruction. Use plastic_brain.toml / heavy_combat_ship.toml in commands.
+
+Historical run 015 uses **advantage-weighted measured-return replay**, replacing
 unstable DQN. See `docs/AWR_RUN.md`. 014 stopped at episode 760: Q magnitude grew
 to ~153 with TD error ~59 despite scaled death reward -1; no recorded completion.
 All 21,821 own-agent transitions recovered into full measured discounted returns
@@ -285,8 +313,8 @@ and status is Level_1:
 
 ```powershell
 # A STOP marker is an intentional stop request. Remove it only when resuming.
-Remove-Item -LiteralPath 'logs\ppo\flywire-awr-015\STOP' -ErrorAction SilentlyContinue
-.\.venv\Scripts\python.exe -u -m python.viewer.serve --train-run flywire-awr-015 --config configs/radar_awr.toml --env-config configs/heavy_combat_ship.toml --resume --device cuda
+Remove-Item -LiteralPath 'logs\ppo\flywire-plastic-016\STOP' -ErrorAction SilentlyContinue
+.\.venv\Scripts\python.exe -u -m python.viewer.serve --train-run flywire-plastic-016 --config configs/plastic_brain.toml --env-config configs/heavy_combat_ship.toml --resume --device cuda
 ```
 
 This foreground command stays running. Use another shell to open the viewer:
@@ -348,7 +376,7 @@ handoff using default configs; do not use it for the current sensor run.
 Request a graceful stop with:
 
 ```powershell
-New-Item -ItemType File -Force 'logs\ppo\flywire-awr-015\STOP' | Out-Null
+New-Item -ItemType File -Force 'logs\ppo\flywire-plastic-016\STOP' | Out-Null
 ```
 
 STOP is checked between episodes. If paused mid-episode, Play is needed to finish
@@ -363,7 +391,7 @@ not the exact Unity scene. A new episode is started. Keep the current checkpoint
 before rolling back. Frozen three-episode best replay, with the trainer stopped:
 
 ```powershell
-.\.venv\Scripts\python.exe -m python.viewer.serve --replay-best flywire-awr-015 --device cuda
+.\.venv\Scripts\python.exe -m python.viewer.serve --replay-best flywire-plastic-016 --device cuda
 ```
 
 Source signatures are byte-sensitive. CRLF/LF conversion on another checkout can
@@ -479,7 +507,7 @@ git diff --check
 git status --short
 git add AGENTS.md README.md docs
 git commit -m "Document agent setup and operating procedures"
-git push origin main
+git push -u origin codex/trainable-fly-brain
 ```
 
 Use a stage list appropriate to the actual task. On this host Git Credential

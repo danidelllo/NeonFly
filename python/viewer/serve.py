@@ -52,11 +52,15 @@ def main():
         parser.error("choose one of fresh training, warm start, resume, or replay")
     active_run = args.train_run or args.replay_best
     encoder = tomllib.loads(Path(args.config).read_text()).get('encoder') if args.train_run else None
+    algorithm = tomllib.loads(Path(args.config).read_text()).get('algorithm') if args.train_run else None
     if args.replay_best:
         import torch
         encoder = torch.load(Path('checkpoints')/args.replay_best/'best.pt',map_location='cpu',weights_only=True)['signature']['config'].get('encoder')
+        algorithm = torch.load(Path('checkpoints')/args.replay_best/'best.pt',map_location='cpu',weights_only=True)['signature']['config'].get('algorithm')
     from python.vision.range_sensor import RADAR_ENCODER
     from python.vision.radar_readout import readout_neurons
+    active_outputs = (np.load(DATA/'output.npy').astype('<i4') if algorithm=='brain_awr'
+                      else readout_neurons(encoder).astype('<i4'))
     if active_run and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}", active_run):
         parser.error("invalid run name")
     load = lambda n: np.load(DATA / (n + ".npy"), mmap_mode="r")
@@ -72,7 +76,7 @@ def main():
     sizes = np.maximum(1, np.bincount(bins, minlength=1024))
     centroids = np.column_stack([np.bincount(bins, weights=axis, minlength=1024)/sizes for axis in xyz.T])
     for route, array in (("/xyz", xyz), ("/centroids", centroids.astype("<f4")),
-                         ("/inputs", load("sensory")), ("/outputs", readout_neurons(encoder).astype('<i4'))):
+                         ("/inputs", load("sensory")), ("/outputs", active_outputs)):
         static[route] = ("application/octet-stream", array.tobytes())
     from python.vision.connectome import sensory_mapping
     visual, slots, resource_neurons = sensory_mapping(load("sensory"))
