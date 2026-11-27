@@ -59,7 +59,7 @@ def main():
         algorithm = torch.load(Path('checkpoints')/args.replay_best/'best.pt',map_location='cpu',weights_only=True)['signature']['config'].get('algorithm')
     from python.vision.range_sensor import RADAR_ENCODER
     from python.vision.radar_readout import readout_neurons
-    active_outputs = (np.load(DATA/'output.npy').astype('<i4') if algorithm=='brain_awr'
+    active_outputs = (np.load(DATA/'output.npy').astype('<i4') if algorithm in ('brain_awr','brain_ppo')
                       else readout_neurons(encoder).astype('<i4'))
     if active_run and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}", active_run):
         parser.error("invalid run name")

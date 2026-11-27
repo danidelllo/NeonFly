@@ -44,12 +44,28 @@ a1a4f5d preserves all earlier fixed-brain work and was pushed before changes.
 | Unity bridge | `127.0.0.1:47651` |
 | Sole model/controller server | `http://127.0.0.1:47652/` |
 | Observer / preferred viewer | `http://127.0.0.1:47653/` |
-| Most recent active run | `flywire-plastic-016` — query live state to confirm |
-| Current run configuration | `configs/plastic_brain.toml`, `configs/heavy_combat_ship.toml` |
+| Most recent active run | `flywire-brain-ppo-017` — query live state to confirm |
+| Current run configuration | `configs/plastic_ppo.toml`, `configs/heavy_combat_ship.toml` |
 | Run state | `checkpoints/<run>/`, `logs/ppo/<run>/` |
-| Launch logs | `logs/launch/flywire-plastic-016-{out,err}.txt` |
+| Launch logs | `logs/launch/flywire-brain-ppo-017-{out,err}.txt` |
 
-Current run 016 trains **intrinsic parameters in the fly circuit itself** with
+Current run 017 uses **recurrent PPO through the SAME trainable fly brain and
+single linear readout**, replacing AWR. See `docs/BRAIN_PPO_RUN.md`. Fresh model,
+no old replay in policy updates. Eight fresh full-level episodes per update,
+signed GAE advantages, clipped PPO and post-step recurrent sampled-KL guard with
+backtracking/rollback (target .01). Recompute recurrent state from episode start;
+detach gradients every 16 actions. Store pending raw rollouts, behavior logp/values
+and frozen advantages in checkpoints so partial batches resume exactly. Archive
+raw episodes on disk for audit; it is NOT an off-policy training buffer. Same
+889 radar/resource scalars, 139,255 neurons with gain/bias/alpha learning, original
+1,415 motor outputs, ONE linear layer, fixed wiring/signs and same task rewards.
+No episode limit; permanent snapshots and five greedy evaluations every 20.
+016 stopped cleanly at episode/update 2,631 / 82,623 decisions. Preserve all old
+models, raw data and source snapshots. 73 tests passed plus full CUDA PPO test
+showing all intrinsic groups change, fixed W and KL-limited accepted steps. No
+claim of gameplay success. Use plastic_ppo.toml / heavy_combat_ship.toml in commands.
+
+Historical run 016 trains **intrinsic parameters in the fly circuit itself** with
 ONE LINEAR action/value readout. See `docs/PLASTIC_BRAIN_RUN.md`. 139,255 cells,
 417,765 intrinsic gain/bias/response-time parameters; anatomical weights/signs
 fixed. Readout 1,415 motor cells -> 37 linear units (36 actions + training value),
@@ -313,8 +329,8 @@ and status is Level_1:
 
 ```powershell
 # A STOP marker is an intentional stop request. Remove it only when resuming.
-Remove-Item -LiteralPath 'logs\ppo\flywire-plastic-016\STOP' -ErrorAction SilentlyContinue
-.\.venv\Scripts\python.exe -u -m python.viewer.serve --train-run flywire-plastic-016 --config configs/plastic_brain.toml --env-config configs/heavy_combat_ship.toml --resume --device cuda
+Remove-Item -LiteralPath 'logs\ppo\flywire-brain-ppo-017\STOP' -ErrorAction SilentlyContinue
+.\.venv\Scripts\python.exe -u -m python.viewer.serve --train-run flywire-brain-ppo-017 --config configs/plastic_ppo.toml --env-config configs/heavy_combat_ship.toml --resume --device cuda
 ```
 
 This foreground command stays running. Use another shell to open the viewer:
@@ -376,7 +392,7 @@ handoff using default configs; do not use it for the current sensor run.
 Request a graceful stop with:
 
 ```powershell
-New-Item -ItemType File -Force 'logs\ppo\flywire-plastic-016\STOP' | Out-Null
+New-Item -ItemType File -Force 'logs\ppo\flywire-brain-ppo-017\STOP' | Out-Null
 ```
 
 STOP is checked between episodes. If paused mid-episode, Play is needed to finish
@@ -391,7 +407,7 @@ not the exact Unity scene. A new episode is started. Keep the current checkpoint
 before rolling back. Frozen three-episode best replay, with the trainer stopped:
 
 ```powershell
-.\.venv\Scripts\python.exe -m python.viewer.serve --replay-best flywire-plastic-016 --device cuda
+.\.venv\Scripts\python.exe -m python.viewer.serve --replay-best flywire-brain-ppo-017 --device cuda
 ```
 
 Source signatures are byte-sensitive. CRLF/LF conversion on another checkout can
@@ -462,6 +478,14 @@ fields. Readout lines show structure/activity, not nonlinear causal attribution.
 Fly body is a licensed NeuroMechFly v2 model from another specimen, illustratively
 aligned; default off. Mapping/readout traces default off. Click a map/resource/
 radar panel to filter tracing; Shift-click a visual pixel for exact assignments.
+
+Input wiring audited without interrupting run 016: see
+`docs/INPUT_WIRING_AUDIT.md`. All 889 channels pass exact injection/order/replay
+checks and have at least one directed path to motor outputs. 135 of 2,850
+nominal input cells have no motor path, but redundancy preserves every channel.
+Viewer/actual mappings match, and live linear scores independently reproduced
+within 1e-6. 71 Python tests and compiled 10,012 clipping/126-angle checks pass.
+No production input or training code changed by this audit.
 
 ## Verification and troubleshooting
 

@@ -136,7 +136,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
         if replay_run:
             replay_saved = torch.load(Path("checkpoints")/replay_run/"best.pt", map_location="cpu", weights_only=True)
             cfg = replay_saved["signature"]["config"]
-        if cfg.get('algorithm') == 'brain_awr':
+        if cfg.get('algorithm') in ('brain_awr','brain_ppo'):
             from python.training.plastic_brain import PlasticBrain
             model = PlasticBrain(device)
             if replay_run:
@@ -151,7 +151,9 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
         replay = None
         eval_rows = []
         if train_run:
-            if cfg.get('algorithm') == 'brain_awr':
+            if cfg.get('algorithm') == 'brain_ppo':
+                from python.training.brain_ppo import Trainer
+            elif cfg.get('algorithm') == 'brain_awr':
                 from python.training.brain_awr import Trainer
             elif cfg.get('algorithm') == 'awr':
                 from python.training.reservoir_awr import Trainer
@@ -159,9 +161,9 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                 from python.training.reservoir_dqn import Trainer
             else:
                 from python.training.reservoir_ppo import Trainer
-            trainer = Trainer(train_run, model if cfg.get('algorithm')=='brain_awr' else model.feature_width,
+            trainer = Trainer(train_run, model if cfg.get('algorithm') in ('brain_awr','brain_ppo') else model.feature_width,
                               device, env.config, resume, warm_start, config_path)
-            if cfg.get('algorithm') not in ('dqn','awr','brain_awr') and len(trainer.returns) == trainer.cfg["episodes_per_update"]:
+            if cfg.get('algorithm') not in ('dqn','awr','brain_awr','brain_ppo') and len(trainer.returns) == trainer.cfg["episodes_per_update"]:
                 trainer.update()
         if replay_run:
             from python.training.reservoir_ppo import ReplayPolicy
@@ -174,7 +176,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
             state, _ = request(1)
             if not state.get('controlled') or state['timeScale'] != 0:
                 raise RuntimeError('Paused game hold was lost')
-        if trainer and cfg.get('algorithm')=='brain_awr':
+        if trainer and cfg.get('algorithm') in ('brain_awr','brain_ppo'):
             trainer.keep_alive = hold
         if trainer:
             seq, episodes = trainer.steps, trainer.episodes
@@ -234,7 +236,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                 if model.encoder:
                     with torch.no_grad():
                         scores = (trainer or replay).head(torch.nn.functional.layer_norm(features, features.shape))[:36]
-                    meta.update(readout="linear" if cfg.get('algorithm')=='brain_awr' else "nonlinear", logits=scores.cpu().tolist(),
+                    meta.update(readout="linear" if cfg.get('algorithm') in ('brain_awr','brain_ppo') else "nonlinear", logits=scores.cpu().tolist(),
                                 brainTrainable=bool(getattr(model,'trainable_brain',False)),
                                 visionEnabled=model.vision_enabled, readoutNeurons=len(model.outputs),
                                 health=game.get("health"), rockets=game.get("rockets"), encoder=model.encoder)
@@ -303,7 +305,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                             messages.put(("complete", "Three frozen-policy replay episodes completed."))
                             return
                     elif trainer:
-                        if cfg.get('algorithm') in ('dqn','awr','brain_awr'):
+                        if cfg.get('algorithm') in ('dqn','awr','brain_awr','brain_ppo'):
                             bootstrap = (torch.nn.functional.layer_norm(
                                 model.advance(obs, info['game']), features.shape).cpu().numpy()
                                 if cut and not done else np.zeros(model.feature_width, np.float32))
@@ -317,7 +319,7 @@ def worker(messages, stop, device, train_run=None, resume=False, warm_start=None
                                                 combat_kills=info.get('combat_kills', 0),
                                                 exploration=dict(trainer.novelty.stats) if trainer.novelty else {},
                                                 damage_fraction=info.get("damage_fraction", 0.), actions=actions.tolist()))
-                        if cfg.get('algorithm') not in ('dqn','awr','brain_awr') and len(trainer.returns) == trainer.cfg["episodes_per_update"]:
+                        if cfg.get('algorithm') not in ('dqn','awr','brain_awr','brain_ppo') and len(trainer.returns) == trainer.cfg["episodes_per_update"]:
                             trainer.update()
                     break
     except Exception:

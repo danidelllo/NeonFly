@@ -1,10 +1,17 @@
 const colors=['#304954','#8bb9ca','#ffc478','#ff7285','#b197ff'];
 export function rangeRadar(){
   const panel=document.getElementById('rangePanel'),canvas=document.getElementById('rangeRadar'),ctx=canvas.getContext('2d');
+  let available=false,hasScan=false;
   return {sample(frame){
     const rays=frame.rays,active=!!rays?.valid;
-    panel.hidden=!active;document.querySelector('.field').classList.toggle('has-range',active);
-    if(!active)return;
+    available ||= !!rays;
+    panel.hidden=!available;document.querySelector('.field').classList.toggle('has-range',available);
+    panel.dataset.live=String(active);
+    if(!active){
+      if(available)document.getElementById('rangeStatus').textContent=hasScan?'Waiting · last scan shown':'Waiting for range scan';
+      return;
+    }
+    hasScan=true;
     ctx.clearRect(0,0,150,150);ctx.fillStyle='#0b131c';ctx.fillRect(0,0,150,150);
     ctx.strokeStyle='#233742';ctx.lineWidth=.6;
     for(const radius of [20,40,60]){ctx.beginPath();ctx.arc(75,75,radius,0,2*Math.PI);ctx.stroke()}

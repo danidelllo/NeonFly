@@ -1,3 +1,5 @@
+Current run: **flywire-brain-ppo-017**, recurrent PPO through trainable fly neurons with one linear motor readout. See [recurrent PPO notes](docs/BRAIN_PPO_RUN.md).
+
 Current experiment: **flywire-plastic-016** on **codex/trainable-fly-brain**. Intrinsic fly-neuron learning with a single linear readout; fixed anatomical wiring/signs. See [trainable brain notes](docs/PLASTIC_BRAIN_RUN.md).
 
 Current run: **flywire-awr-015**, advantage-weighted replay using measured episode returns (no Q bootstrapping). See [AWR run notes](docs/AWR_RUN.md).

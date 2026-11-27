@@ -46,6 +46,9 @@ class Trainer:
         self.signature = dict(config=self.cfg,environment=asdict(env_config),graph=graph_digest(),width=self.width,
                               representation='intrinsic-gain-bias-alpha;raw-radar889;motor-current;linear37-v1',
                               sources={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in names})
+        if self.algorithm == 'brain_ppo':
+            for p in ('python/training/brain_ppo.py','python/training/reservoir_ppo.py'):
+                self.signature['sources'][p] = hashlib.sha256(Path(p).read_bytes()).hexdigest()
         torch.manual_seed(self.cfg['seed'])
         self.head = make_head(self.width,self.cfg,device)
         self.opt = torch.optim.Adam([{'params':list(model.parameters()),'lr':self.cfg['brain_learning_rate']},
